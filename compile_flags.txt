@@ -1,0 +1,5 @@
+-std=c++20
+-xc++
+-Isrc
+-isysroot
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk

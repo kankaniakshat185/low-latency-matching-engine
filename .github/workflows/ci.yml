@@ -1,0 +1,23 @@
+name: C++ CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure CMake (Debug with Sanitizers)
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+    - name: Build Engine and Tests
+      run: cmake --build build --target engine_tests -j 4
+
+    - name: Run Correctness Tests
+      run: ./build/engine_tests

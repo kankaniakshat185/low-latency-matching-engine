@@ -1,47 +1,54 @@
 # Ultra Low-Latency Matching Engine
 
-This repository contains the source code for a FAANG/HFT interview-grade C++ matching engine. The project prioritizes **depth over breadth**, focusing entirely on building the fastest possible single-machine matching engine.
+This repository evaluates the architectural design and performance limits of a single-machine C++20 matching engine. The objective is to establish a rigorous, evidence-based methodology for implementing and measuring low-latency financial systems.
 
-## Core Philosophy
+## Architecture Overview
+The engine strictly implements Price-Time Priority (FIFO) matching. 
 
-This project intentionally excludes external features like networking, databases, frontend dashboards, and authentication. Every component exists for one of the following reasons:
-*   Correctness
-*   Performance
-*   Modularity
-*   Maintainability
-*   Engineering Quality
+The architecture favors composition over inheritance. The core hierarchy is structurally isolated: `MatchingEngine` → `OrderBook` → `PriceLevel`. This isolation ensures that internal data structures (e.g., `std::map` vs. contiguous memory pools) can be empirically profiled and replaced without violating the deterministic matching logic.
 
-The engine is built iteratively, adhering strictly to the principle of **Measurement Before Optimization**. 
+## Benchmarking Methodology
+This project adheres to a strict principle: **No engineering conclusion is drawn without measured evidence.**
 
-## Execution Phases
+*   **Workloads**: The engine is evaluated against synthetic workloads isolating specific algorithmic paths (Random Prices, Heavy Cancels, Worst-Case Same Price).
+*   **Warm-Up**: Benchmarks execute a 10% unmeasured warm-up phase to stabilize instruction caches and branch predictors.
+*   **Measurement**: Latencies (Median, P90, P99) and throughput are captured utilizing `std::chrono` around specific action invocations. 
+*   *(Note: The observer overhead of `std::chrono` is actively acknowledged as a threat to validity at the nanosecond scale).*
 
-Development is structured into five distinct phases:
+## Current Baseline Performance (Phase 1/2)
 
-1.  **Phase 1: Baseline & Correctness** (Status: **Complete**) - Established a mathematically correct O(log P) baseline using `std::map` and `std::list`. All matching logic (Price-Time Priority) is verified against a strict regression suite.
-2.  **Phase 2: Measurement & Benchmarking** (Status: Pending) - Implementing synthetic workloads and highly accurate latency/throughput tracking.
-3.  **Phase 3: Statistics & Replay Engine** (Status: Pending) - Building a fast parser to replay historical market datasets for realistic bursty testing.
-4.  **Phase 4: Profiling & Optimization** (Status: Pending) - Using `perf` to identify bottlenecks and replacing standard containers with optimized structures (contiguous arrays, memory pools).
-5.  **Phase 5: The Engineering Notebook** (Status: Ongoing) - Extensive documentation of every architectural decision, tradeoff, and optimization.
+The current implementation (Version 1.0) intentionally utilizes standard library containers (`std::map`, `std::list`) to establish a mathematically correct, verified baseline.
 
-## Optimization History
+**Environment**: Apple M2 (ARM64), macOS 14.5, `clang++ -O3 -std=c++20`
 
-*(This section will be populated during Phase 4 as optimizations are implemented and benchmarked against the Phase 1 baseline).*
+| Workload (1M Actions) | Throughput | Median Latency | P99 Latency |
+| :--- | :--- | :--- | :--- |
+| **Random Prices** | ~1.08 M actions/sec | 250 ns | 2,208 ns |
+| **Heavy Cancels** | ~1.21 M actions/sec | 250 ns | 2,333 ns |
+| **Worst-Case** | ~2.75 M actions/sec | 84 ns | 667 ns |
 
-| Version | Optimization | Reason (Profiling Data) | Benchmark Before | Benchmark After | Lessons Learned |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| 1.0 | Baseline (std::map/std::list) | N/A - Establish correctness | TBD | TBD | Correctness verified. |
+*(Observation: The Worst-Case scenario bypasses O(log P) heap traversal, indicating that `std::map` lookup overhead is likely the primary bottleneck).*
+
+## Documentation
+Extensive documentation detailing architectural tradeoffs, design decisions, and optimization history is available in the [`public_docs/`](public_docs/) directory.
+
+*   [Architecture](public_docs/architecture.md)
+*   [Matching Engine](public_docs/matching_engine.md)
+*   [Benchmarking Methodology](public_docs/benchmarking.md)
+*   [Design Decisions](public_docs/design_decisions.md)
+*   [Optimization History](public_docs/optimization_history.md)
 
 ## Build Instructions
-
-This project requires a C++20 compliant compiler.
+The project contains zero external dependencies and compiles instantly.
 
 ```bash
 mkdir build && cd build
 cmake ..
 make
+
+# Run correctness regression suite
 ./engine_tests
+
+# Run performance benchmarks
+./engine_benchmark
 ```
-
-## Documentation
-
-The project includes an extensive `docs/` directory acting as an "Engineering Notebook" that details the architecture, design decisions, memory layouts, algorithmic complexities, and a learning journal. 

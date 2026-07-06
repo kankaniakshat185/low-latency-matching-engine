@@ -1,127 +1,163 @@
-#include "test_framework.h"
+#include <gtest/gtest.h>
 #include "engine/MatchingEngine.h"
+#include "engine/Order.h"
+#include "engine/Types.h"
+#include <vector>
 
 using namespace engine;
 
-void testSingleLimitOrder() {
+class MatchingEngineTest : public ::testing::Test {
+protected:
     MatchingEngine engine;
-    Order buyOrder(1, 100, 50, Side::Buy, OrderType::Limit);
-    auto trades = engine.processOrder(buyOrder);
+
+    void SetUp() override {
+        // Automatically called before each test
+    }
+
+    void TearDown() override {
+        // Automatically called after each test
+    }
+};
+
+TEST_F(MatchingEngineTest, EmptyBookBehavior) {
+    auto trades = engine.processOrder(Order(1, 100, 10, Side::Buy, OrderType::Limit));
+    EXPECT_TRUE(trades.empty());
     
-    ASSERT_EQ(trades.size(), 0);
-    const auto& book = engine.getOrderBook();
-    ASSERT_EQ(book.getBids().size(), 1);
-    ASSERT_EQ(book.getAsks().size(), 0);
-    ASSERT_EQ(book.getBids().begin()->second.getTotalQuantity(), 50);
+    trades = engine.processOrder(Order(2, 0, 10, Side::Sell, OrderType::Market));
+    EXPECT_TRUE(trades.empty());
 }
 
-void testExactMatch() {
-    MatchingEngine engine;
-    engine.processOrder(Order(1, 100, 50, Side::Buy, OrderType::Limit));
+TEST_F(MatchingEngineTest, ExactMatch) {
+    auto t1 = engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    EXPECT_TRUE(t1.empty());
+
+    auto t2 = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
+    ASSERT_EQ(t2.size(), 1);
     
-    auto trades = engine.processOrder(Order(2, 100, 50, Side::Sell, OrderType::Limit));
+    EXPECT_EQ(t2[0].makerOrderId, 1);
+    EXPECT_EQ(t2[0].takerOrderId, 2);
+    EXPECT_EQ(t2[0].executeQuantity, 10);
+    EXPECT_EQ(t2[0].executePrice, 100);
+}
+
+TEST_F(MatchingEngineTest, PartialFillAggressive) {
+    engine.processOrder(Order(1, 100, 5, Side::Sell, OrderType::Limit));
+    
+    // Aggressive buy order is larger than resting liquidity
+    auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
     
     ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].makerOrderId, 1);
-    ASSERT_EQ(trades[0].takerOrderId, 2);
-    ASSERT_EQ(trades[0].price, 100);
-    ASSERT_EQ(trades[0].quantity, 50);
-    
-    const auto& book = engine.getOrderBook();
-    ASSERT_EQ(book.getBids().size(), 0);
-    ASSERT_EQ(book.getAsks().size(), 0);
+    EXPECT_EQ(trades[0].executeQuantity, 5);
+    EXPECT_EQ(trades[0].executePrice, 100);
+
+    // Remaining 5 qty should be resting on the book. A new sell should match it.
+    auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Sell, OrderType::Limit));
+    ASSERT_EQ(trades2.size(), 1);
+    EXPECT_EQ(trades2[0].makerOrderId, 2);
+    EXPECT_EQ(trades2[0].takerOrderId, 3);
 }
 
-void testPartialMatch() {
-    MatchingEngine engine;
-    engine.processOrder(Order(1, 100, 100, Side::Buy, OrderType::Limit));
+TEST_F(MatchingEngineTest, PartialFillPassive) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
     
-    auto trades = engine.processOrder(Order(2, 100, 40, Side::Sell, OrderType::Limit));
+    // Aggressive buy order is smaller than resting liquidity
+    auto trades = engine.processOrder(Order(2, 100, 5, Side::Buy, OrderType::Limit));
     
     ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].quantity, 40);
+    EXPECT_EQ(trades[0].executeQuantity, 5);
     
-    const auto& book = engine.getOrderBook();
-    ASSERT_EQ(book.getBids().size(), 1);
-    ASSERT_EQ(book.getBids().begin()->second.getTotalQuantity(), 60);
+    // The passive order (1) should still have 5 qty left.
+    auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Buy, OrderType::Limit));
+    ASSERT_EQ(trades2.size(), 1);
+    EXPECT_EQ(trades2[0].makerOrderId, 1);
+    EXPECT_EQ(trades2[0].takerOrderId, 3);
 }
 
-void testPriceTimePriority() {
-    MatchingEngine engine;
-    // Add two buy orders at the same price
-    engine.processOrder(Order(1, 100, 50, Side::Buy, OrderType::Limit));
-    engine.processOrder(Order(2, 100, 50, Side::Buy, OrderType::Limit));
+TEST_F(MatchingEngineTest, PriceTimePriorityFIFO) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    engine.processOrder(Order(2, 100, 10, Side::Sell, OrderType::Limit));
     
-    // Add a buy order at a higher price
-    engine.processOrder(Order(3, 101, 50, Side::Buy, OrderType::Limit));
-    
-    // Sell 120 quantity
-    auto trades = engine.processOrder(Order(4, 99, 120, Side::Sell, OrderType::Limit));
-    
-    ASSERT_EQ(trades.size(), 3);
-    
-    // First trade should match the highest price
-    ASSERT_EQ(trades[0].makerOrderId, 3);
-    ASSERT_EQ(trades[0].price, 101);
-    ASSERT_EQ(trades[0].quantity, 50);
-    
-    // Second trade should match the first order at price 100
-    ASSERT_EQ(trades[1].makerOrderId, 1);
-    ASSERT_EQ(trades[1].price, 100);
-    ASSERT_EQ(trades[1].quantity, 50);
-    
-    // Third trade should match the second order at price 100
-    ASSERT_EQ(trades[2].makerOrderId, 2);
-    ASSERT_EQ(trades[2].price, 100);
-    ASSERT_EQ(trades[2].quantity, 20);
-    
-    const auto& book = engine.getOrderBook();
-    ASSERT_EQ(book.getBids().size(), 1);
-    ASSERT_EQ(book.getBids().begin()->second.getTotalQuantity(), 30);
-}
-
-void testCancelOrder() {
-    MatchingEngine engine;
-    engine.processOrder(Order(1, 100, 50, Side::Buy, OrderType::Limit));
-    engine.processOrder(Order(2, 100, 50, Side::Buy, OrderType::Limit));
-    
-    bool canceled = engine.cancelOrder(1);
-    ASSERT_TRUE(canceled);
-    
-    const auto& book = engine.getOrderBook();
-    ASSERT_EQ(book.getBids().size(), 1);
-    ASSERT_EQ(book.getBids().begin()->second.getTotalQuantity(), 50);
-    
-    auto trades = engine.processOrder(Order(3, 100, 50, Side::Sell, OrderType::Limit));
-    ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].makerOrderId, 2);
-}
-
-void testMarketOrder() {
-    MatchingEngine engine;
-    engine.processOrder(Order(1, 100, 50, Side::Sell, OrderType::Limit));
-    engine.processOrder(Order(2, 105, 50, Side::Sell, OrderType::Limit));
-    
-    // Market buy of 70
-    auto trades = engine.processOrder(Order(3, 0, 70, Side::Buy, OrderType::Market));
+    // Market order sweeps 15. Should take all 10 from order 1, and 5 from order 2.
+    auto trades = engine.processOrder(Order(3, 0, 15, Side::Buy, OrderType::Market));
     
     ASSERT_EQ(trades.size(), 2);
-    ASSERT_EQ(trades[0].makerOrderId, 1);
-    ASSERT_EQ(trades[0].quantity, 50);
     
-    ASSERT_EQ(trades[1].makerOrderId, 2);
-    ASSERT_EQ(trades[1].quantity, 20);
+    EXPECT_EQ(trades[0].makerOrderId, 1);
+    EXPECT_EQ(trades[0].executeQuantity, 10);
     
-    const auto& book = engine.getOrderBook();
-    ASSERT_EQ(book.getAsks().size(), 1);
-    ASSERT_EQ(book.getAsks().begin()->second.getTotalQuantity(), 30);
+    EXPECT_EQ(trades[1].makerOrderId, 2);
+    EXPECT_EQ(trades[1].executeQuantity, 5);
 }
 
-void runAllTests() {
-    testSingleLimitOrder();
-    testExactMatch();
-    testPartialMatch();
-    testPriceTimePriority();
-    testCancelOrder();
-    testMarketOrder();
+TEST_F(MatchingEngineTest, BetterPricePriority) {
+    engine.processOrder(Order(1, 101, 10, Side::Sell, OrderType::Limit)); // Worse price
+    engine.processOrder(Order(2, 100, 10, Side::Sell, OrderType::Limit)); // Better price
+    
+    // Buy at 101 should match with 100 first
+    auto trades = engine.processOrder(Order(3, 101, 10, Side::Buy, OrderType::Limit));
+    
+    ASSERT_EQ(trades.size(), 1);
+    EXPECT_EQ(trades[0].makerOrderId, 2);
+    EXPECT_EQ(trades[0].executePrice, 100);
+}
+
+TEST_F(MatchingEngineTest, CancellationSuccess) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    bool success = engine.cancelOrder(1);
+    EXPECT_TRUE(success);
+    
+    auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
+    EXPECT_TRUE(trades.empty()); // Order 1 was cancelled, so no match
+}
+
+TEST_F(MatchingEngineTest, CancellationFailure) {
+    bool success = engine.cancelOrder(999);
+    EXPECT_FALSE(success);
+}
+
+TEST_F(MatchingEngineTest, MarketOrderDiscardRemainder) {
+    engine.processOrder(Order(1, 100, 5, Side::Sell, OrderType::Limit));
+    
+    // Market buy for 10
+    auto trades = engine.processOrder(Order(2, 0, 10, Side::Buy, OrderType::Market));
+    
+    ASSERT_EQ(trades.size(), 1);
+    EXPECT_EQ(trades[0].executeQuantity, 5);
+    
+    // The remaining 5 of the market order should be discarded. A new sell should NOT match it.
+    auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Sell, OrderType::Limit));
+    EXPECT_TRUE(trades2.empty());
+}
+
+// ---------------------------------------------------------
+// Integration Tests
+// ---------------------------------------------------------
+
+TEST(MatchingEngineIntegration, ReplaySimulation) {
+    MatchingEngine engine;
+    
+    // Simulate parsing a file of mixed actions
+    std::vector<Order> fileReplay = {
+        Order(1, 100, 50, Side::Sell, OrderType::Limit),
+        Order(2, 101, 50, Side::Sell, OrderType::Limit),
+        Order(3, 99,  50, Side::Buy,  OrderType::Limit),
+        Order(4, 98,  50, Side::Buy,  OrderType::Limit)
+    };
+
+    for (const auto& o : fileReplay) {
+        engine.processOrder(o);
+    }
+
+    // Cancel an order mid-book
+    EXPECT_TRUE(engine.cancelOrder(2));
+
+    // Aggressive sweeping market order
+    auto trades = engine.processOrder(Order(5, 0, 100, Side::Buy, OrderType::Market));
+    
+    // It should match 50 against Order 1 at price 100.
+    // Order 2 was cancelled.
+    // The remaining 50 of Order 5 is discarded.
+    ASSERT_EQ(trades.size(), 1);
+    EXPECT_EQ(trades[0].makerOrderId, 1);
+    EXPECT_EQ(trades[0].executeQuantity, 50);
 }

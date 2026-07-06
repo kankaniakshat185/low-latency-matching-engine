@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+bin/
+*.o
+*.out
+*.a
+*.dylib
+*.so
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Documentation
+# (Added per your request, though typically this would be tracked for an educational repository)
+docs/

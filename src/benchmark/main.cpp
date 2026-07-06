@@ -1,4 +1,6 @@
 #include "benchmark/WorkloadGenerator.h"
+#include "replay/CSVParser.h"
+#include "engine/MatchingEngine.h"
 #include "engine/MatchingEngine.h"
 #include "utils/Timer.h"
 #include <iostream>
@@ -91,7 +93,26 @@ void printResult(const BenchmarkResult& result) {
     std::cout << "=========================================\n\n";
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc == 2) {
+        std::string filepath = argv[1];
+        std::cout << "Loading replay file: " << filepath << "...\n";
+        try {
+            auto replayWorkload = engine::replay::CSVParser::parseFile(filepath);
+            size_t totalActions = replayWorkload.size();
+            size_t warmupActions = totalActions / 10; // 10% warmup
+            size_t measuredActions = totalActions - warmupActions;
+            
+            BenchmarkConfig replayConfig{"CSV Replay Workload", measuredActions, warmupActions};
+            auto replayResult = runBenchmark(replayConfig, replayWorkload);
+            printResult(replayResult);
+        } catch (const std::exception& e) {
+            std::cerr << "Error loading replay file: " << e.what() << "\n";
+            return 1;
+        }
+        return 0;
+    }
+
     WorkloadGenerator generator;
     
     // Benchmark configuration
@@ -103,7 +124,7 @@ int main() {
     BenchmarkConfig cancelsConfig{"Heavy Cancels", measuredActions, warmupActions};
     BenchmarkConfig worstCaseConfig{"Worst Case (Same Price)", measuredActions, warmupActions};
 
-    std::cout << "Generating workloads (" << totalActions << " actions each)...\n\n";
+    std::cout << "Generating synthetic workloads (" << totalActions << " actions each)...\n\n";
     
     auto randomWorkload = generator.generateRandom(totalActions);
     auto cancelsWorkload = generator.generateHeavyCancels(totalActions);

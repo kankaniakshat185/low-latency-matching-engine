@@ -15,7 +15,8 @@ Benchmarking within this project produces *observations*, not conclusions.
 ## Methodology
 *   **Measurement**: Latency is measured via `std::chrono::high_resolution_clock` encapsulating exactly one action (`processOrder` or `cancelOrder`).
 *   **Warm-up**: Every benchmark executes a 10% unmeasured warm-up phase to stabilize instruction caches and branch predictors before timing begins.
-*   **Workloads**: We utilize synthetic workloads testing Random Prices, Heavy Cancels, and Worst-Case (identical prices) scenarios.
+*   **Workloads**: We utilize synthetic workloads (Random Prices, Heavy Cancels, Worst-Case Same Price) as well as historical Limit Order Book (LOB) replays. A small sample historical dataset is provided (`data/sample.csv`). Larger public datasets for extensive historical replay benchmarking can be sourced from providers such as LOBSTER.
+*   **Execution**: Synthetic workloads execute via `./engine_benchmark`. Historical replays execute via `./engine_benchmark data/sample.csv`.
 *   **Environment**: Benchmark results are meaningless without hardware context. All published results include exact compiler flags, architecture, and OS configurations.
 
 ## Limitations & Threats to Validity

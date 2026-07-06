@@ -19,11 +19,13 @@ protected:
     }
 };
 
-TEST_F(MatchingEngineTest, EmptyBookBehavior) {
+TEST_F(MatchingEngineTest, EmptyBookLimitOrder) {
     auto trades = engine.processOrder(Order(1, 100, 10, Side::Buy, OrderType::Limit));
     EXPECT_TRUE(trades.empty());
-    
-    trades = engine.processOrder(Order(2, 0, 10, Side::Sell, OrderType::Market));
+}
+
+TEST_F(MatchingEngineTest, EmptyBookMarketOrder) {
+    auto trades = engine.processOrder(Order(1, 0, 10, Side::Sell, OrderType::Market));
     EXPECT_TRUE(trades.empty());
 }
 

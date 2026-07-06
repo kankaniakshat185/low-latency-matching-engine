@@ -36,8 +36,8 @@ TEST_F(MatchingEngineTest, ExactMatch) {
     
     EXPECT_EQ(t2[0].makerOrderId, 1);
     EXPECT_EQ(t2[0].takerOrderId, 2);
-    EXPECT_EQ(t2[0].executeQuantity, 10);
-    EXPECT_EQ(t2[0].executePrice, 100);
+    EXPECT_EQ(t2[0].quantity, 10);
+    EXPECT_EQ(t2[0].price, 100);
 }
 
 TEST_F(MatchingEngineTest, PartialFillAggressive) {
@@ -47,8 +47,8 @@ TEST_F(MatchingEngineTest, PartialFillAggressive) {
     auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
     
     ASSERT_EQ(trades.size(), 1);
-    EXPECT_EQ(trades[0].executeQuantity, 5);
-    EXPECT_EQ(trades[0].executePrice, 100);
+    EXPECT_EQ(trades[0].quantity, 5);
+    EXPECT_EQ(trades[0].price, 100);
 
     // Remaining 5 qty should be resting on the book. A new sell should match it.
     auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Sell, OrderType::Limit));
@@ -64,7 +64,7 @@ TEST_F(MatchingEngineTest, PartialFillPassive) {
     auto trades = engine.processOrder(Order(2, 100, 5, Side::Buy, OrderType::Limit));
     
     ASSERT_EQ(trades.size(), 1);
-    EXPECT_EQ(trades[0].executeQuantity, 5);
+    EXPECT_EQ(trades[0].quantity, 5);
     
     // The passive order (1) should still have 5 qty left.
     auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Buy, OrderType::Limit));
@@ -83,10 +83,10 @@ TEST_F(MatchingEngineTest, PriceTimePriorityFIFO) {
     ASSERT_EQ(trades.size(), 2);
     
     EXPECT_EQ(trades[0].makerOrderId, 1);
-    EXPECT_EQ(trades[0].executeQuantity, 10);
+    EXPECT_EQ(trades[0].quantity, 10);
     
     EXPECT_EQ(trades[1].makerOrderId, 2);
-    EXPECT_EQ(trades[1].executeQuantity, 5);
+    EXPECT_EQ(trades[1].quantity, 5);
 }
 
 TEST_F(MatchingEngineTest, BetterPricePriority) {
@@ -98,7 +98,7 @@ TEST_F(MatchingEngineTest, BetterPricePriority) {
     
     ASSERT_EQ(trades.size(), 1);
     EXPECT_EQ(trades[0].makerOrderId, 2);
-    EXPECT_EQ(trades[0].executePrice, 100);
+    EXPECT_EQ(trades[0].price, 100);
 }
 
 TEST_F(MatchingEngineTest, CancellationSuccess) {
@@ -122,7 +122,7 @@ TEST_F(MatchingEngineTest, MarketOrderDiscardRemainder) {
     auto trades = engine.processOrder(Order(2, 0, 10, Side::Buy, OrderType::Market));
     
     ASSERT_EQ(trades.size(), 1);
-    EXPECT_EQ(trades[0].executeQuantity, 5);
+    EXPECT_EQ(trades[0].quantity, 5);
     
     // The remaining 5 of the market order should be discarded. A new sell should NOT match it.
     auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Sell, OrderType::Limit));
@@ -159,5 +159,5 @@ TEST(MatchingEngineIntegration, ReplaySimulation) {
     // The remaining 50 of Order 5 is discarded.
     ASSERT_EQ(trades.size(), 1);
     EXPECT_EQ(trades[0].makerOrderId, 1);
-    EXPECT_EQ(trades[0].executeQuantity, 50);
+    EXPECT_EQ(trades[0].quantity, 50);
 }

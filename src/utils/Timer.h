@@ -66,11 +66,17 @@ inline LatencyMetrics calculateMetrics(std::vector<uint64_t>& latencies) {
     uint64_t sum = std::accumulate(latencies.begin(), latencies.end(), 0ULL);
     uint64_t average = sum / count;
 
-    uint64_t p50 = latencies[count * 0.50];
-    uint64_t p90 = latencies[count * 0.90];
-    uint64_t p95 = latencies[count * 0.95];
-    uint64_t p99 = latencies[count * 0.99];
-    uint64_t p999 = latencies[count * 0.999];
+    auto percentile = [&](double p) -> uint64_t {
+        size_t idx = static_cast<size_t>(p * static_cast<double>(count));
+        if (idx >= count) idx = count - 1;
+        return latencies[idx];
+    };
+
+    uint64_t p50  = percentile(0.50);
+    uint64_t p90  = percentile(0.90);
+    uint64_t p95  = percentile(0.95);
+    uint64_t p99  = percentile(0.99);
+    uint64_t p999 = percentile(0.999);
 
     return {count, min, max, average, p50, p90, p95, p99, p999};
 }

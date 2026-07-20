@@ -1,7 +1,6 @@
 #include "benchmark/WorkloadGenerator.h"
 #include "replay/CSVParser.h"
 #include "engine/MatchingEngine.h"
-#include "engine/MatchingEngine.h"
 #include "utils/Timer.h"
 #include <iostream>
 #include <iomanip>
@@ -28,39 +27,52 @@ struct BenchmarkResult {
 
 BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<BenchmarkAction>& actions) {
     MatchingEngine engine;
-    std::vector<uint64_t> latencies;
-    latencies.reserve(config.numActions);
-
     uint64_t totalMatches = 0;
-    
-    // Warm-up phase
+
+    // --- Pass 1: Warm-up ---
     for (size_t i = 0; i < config.numWarmupActions && i < actions.size(); ++i) {
-        if (actions[i].actionType == ActionType::Insert) {
+        if (actions[i].actionType == ActionType::Insert)
             engine.processOrder(actions[i].order);
-        } else {
+        else
             engine.cancelOrder(actions[i].order.id);
-        }
     }
 
+    // --- Pass 2: Pure throughput measurement (NO per-op timers) ---
     Timer totalTimer;
     totalTimer.start();
-
-    // Measurement phase
     for (size_t i = config.numWarmupActions; i < actions.size(); ++i) {
-        Timer opTimer;
-        opTimer.start();
-
         if (actions[i].actionType == ActionType::Insert) {
             auto trades = engine.processOrder(actions[i].order);
             totalMatches += trades.size();
         } else {
             engine.cancelOrder(actions[i].order.id);
         }
+    }
+    double totalElapsedSec = totalTimer.elapsedSeconds();
 
+    // --- Pass 3: Latency measurement (fresh engine, same workload) ---
+    // We reset the engine and replay to measure per-op latency cleanly.
+    MatchingEngine engineForLatency;
+    std::vector<uint64_t> latencies;
+    latencies.reserve(actions.size() - config.numWarmupActions);
+
+    // Warm up the latency engine too
+    for (size_t i = 0; i < config.numWarmupActions && i < actions.size(); ++i) {
+        if (actions[i].actionType == ActionType::Insert)
+            engineForLatency.processOrder(actions[i].order);
+        else
+            engineForLatency.cancelOrder(actions[i].order.id);
+    }
+
+    for (size_t i = config.numWarmupActions; i < actions.size(); ++i) {
+        Timer opTimer;
+        if (actions[i].actionType == ActionType::Insert)
+            engineForLatency.processOrder(actions[i].order);
+        else
+            engineForLatency.cancelOrder(actions[i].order.id);
         latencies.push_back(opTimer.elapsedNanos());
     }
 
-    double totalElapsedSec = totalTimer.elapsedSeconds();
     size_t measuredActions = actions.size() - config.numWarmupActions;
     double throughput = measuredActions / totalElapsedSec;
 
@@ -100,8 +112,14 @@ int main(int argc, char* argv[]) {
         try {
             auto replayWorkload = engine::replay::CSVParser::parseFile(filepath);
             size_t totalActions = replayWorkload.size();
-            size_t warmupActions = totalActions / 10; // 10% warmup
+            size_t warmupActions = std::max(totalActions / 10, static_cast<size_t>(1));
             size_t measuredActions = totalActions - warmupActions;
+
+            if (totalActions < 10000) {
+                std::cerr << "[Warning] Replay file has only " << totalActions 
+                          << " actions. Latency measurements will be statistically unreliable "
+                          << "(recommend >= 10,000 actions for meaningful percentiles).\n";
+            }
             
             BenchmarkConfig replayConfig{"CSV Replay Workload", measuredActions, warmupActions};
             auto replayResult = runBenchmark(replayConfig, replayWorkload);

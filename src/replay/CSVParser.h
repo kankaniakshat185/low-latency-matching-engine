@@ -29,21 +29,29 @@ public:
         }
 
         std::string line;
+        int lineNumber = 0;
         
         // Skip header if present (optional check)
         // If the first line doesn't start with I or C, assume it's a header
         if (std::getline(file, line)) {
+            ++lineNumber;
             if (line.empty() || (line[0] != 'I' && line[0] != 'C')) {
                 // It's a header, skip it.
             } else {
-                // It's a data row, parse it.
-                actions.push_back(parseLine(line));
+                try { actions.push_back(parseLine(line)); }
+                catch (const std::exception& e) {
+                    throw std::runtime_error("Parse error on line " + std::to_string(lineNumber) + ": " + e.what());
+                }
             }
         }
 
         while (std::getline(file, line)) {
+            ++lineNumber;
             if (line.empty()) continue;
-            actions.push_back(parseLine(line));
+            try { actions.push_back(parseLine(line)); }
+            catch (const std::exception& e) {
+                throw std::runtime_error("Parse error on line " + std::to_string(lineNumber) + ": " + e.what());
+            }
         }
 
         return actions;

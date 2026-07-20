@@ -3,7 +3,6 @@
 #include "engine/PriceLevel.h"
 #include <map>
 #include <unordered_map>
-#include <optional>
 
 namespace engine {
 
@@ -65,20 +64,6 @@ public:
         return true;
     }
 
-    // Modifies the quantity of an order in the book (useful for partial fills)
-    void reduceOrderQuantity(OrderId id, Quantity fillQuantity) {
-        auto locIt = orderLocations_.find(id);
-        if (locIt != orderLocations_.end()) {
-            locIt->second.iterator->quantity -= fillQuantity;
-            
-            // Also need to update the total quantity in the price level.
-            // For this baseline, we just manually adjust it or we could provide a method on PriceLevel.
-            // Let's add a method on PriceLevel to handle partial fills if needed, but since we 
-            // process fills directly in MatchingEngine, we will handle quantity reduction there 
-            // and only remove from book when fully filled.
-        }
-    }
-
     std::map<Price, PriceLevel, std::greater<Price>>& getBids() { return bids_; }
     const std::map<Price, PriceLevel, std::greater<Price>>& getBids() const { return bids_; }
     std::map<Price, PriceLevel, std::less<Price>>& getAsks() { return asks_; }
@@ -86,21 +71,6 @@ public:
 
     void removeOrderLocation(OrderId id) {
         orderLocations_.erase(id);
-    }
-    
-    // Removes an empty price level. Should be called by MatchingEngine after full fills exhaust a level.
-    void removeEmptyBid(Price price) {
-        auto it = bids_.find(price);
-        if (it != bids_.end() && it->second.isEmpty()) {
-            bids_.erase(it);
-        }
-    }
-
-    void removeEmptyAsk(Price price) {
-        auto it = asks_.find(price);
-        if (it != asks_.end() && it->second.isEmpty()) {
-            asks_.erase(it);
-        }
     }
 
 private:

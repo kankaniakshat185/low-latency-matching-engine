@@ -23,9 +23,9 @@ The current implementation (Version 1.0) intentionally utilizes standard library
 
 | Workload (1M Actions) | Throughput | Median Latency | P99 Latency |
 | :--- | :--- | :--- | :--- |
-| **Random Prices** | ~1.08 M actions/sec | 250 ns | 2,208 ns |
-| **Heavy Cancels** | ~1.21 M actions/sec | 250 ns | 2,333 ns |
-| **Worst-Case** | ~2.75 M actions/sec | 84 ns | 667 ns |
+| **Random Prices** | ~6.78 M actions/sec | 125 ns | 417 ns |
+| **Heavy Cancels** | ~8.73 M actions/sec | 125 ns | 541 ns |
+| **Worst-Case** | ~15.73 M actions/sec | 42 ns | 209 ns |
 
 *(Observation: The Worst-Case scenario bypasses O(log P) heap traversal, indicating that `std::map` lookup overhead is likely the primary bottleneck).*
 
@@ -39,11 +39,11 @@ Extensive documentation detailing architectural tradeoffs, design decisions, and
 *   [Optimization History](public_docs/optimization_history.md)
 
 ## Build Instructions
-The project contains zero external dependencies and compiles instantly.
+The project fetches GoogleTest automatically via CMake FetchContent on first build (requires a network connection). The engine and benchmark executables themselves have zero runtime dependencies.
 
 ```bash
 mkdir build && cd build
-cmake ..
+cmake ..        # Downloads GoogleTest on first run
 make
 
 # Run correctness regression suite

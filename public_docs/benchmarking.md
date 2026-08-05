@@ -16,8 +16,11 @@ Benchmarking within this project produces *observations*, not conclusions.
 *   **Measurement**: Latency is measured via `std::chrono::high_resolution_clock` encapsulating exactly one action (`processOrder` or `cancelOrder`).
 *   **Warm-up**: Every benchmark executes a 10% unmeasured warm-up phase to stabilize instruction caches and branch predictors before timing begins.
 *   **Workloads**: We utilize synthetic workloads (Random Prices, Heavy Cancels, Worst-Case Same Price) as well as historical Limit Order Book (LOB) replays. A small sample historical dataset is provided (`data/sample.csv`). Larger public datasets for extensive historical replay benchmarking can be sourced from providers such as LOBSTER.
-*   **Execution**: Synthetic workloads execute via `./engine_benchmark`. Historical replays execute via `./engine_benchmark data/sample.csv`.
+*   **Execution**: Synthetic workloads execute via `./engine_benchmark`. Historical replays execute via `./engine_benchmark data/sample.csv`. Run `./engine_benchmark --help` for full CLI usage; an unrecognized extra argument is now a hard error (exit code 1) rather than silently falling back to the synthetic suite.
 *   **Environment**: Benchmark results are meaningless without hardware context. All published results include exact compiler flags, architecture, and OS configurations.
+
+## CI Coverage vs. Performance Gating
+CI builds and runs the benchmark binary in both Debug (sanitizer) and Release (`-O3`), and smoke-tests it against `data/sample.csv`, so a crash or build failure in the exact configuration behind the published numbers gets caught automatically. Performance itself isn't CI-gated on purpose — shared runners have too much noise for a nanosecond-scale number to be a trustworthy pass/fail signal. Perf work stays a local activity, recorded by hand in `optimization_history.md`.
 
 ## Limitations & Threats to Validity
 The current metrics are subject to the following known limitations:

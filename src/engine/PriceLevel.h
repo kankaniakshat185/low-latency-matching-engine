@@ -38,16 +38,21 @@ public:
         totalQuantity_ -= qty;
     }
     
-    // Allow the MatchingEngine to iterate and modify orders during matching
-    std::list<Order>& getOrders() { return orders_; }
     // Read-only view for callers (tests, invariant checks) that only need
     // to inspect resting orders without mutating them.
     const std::list<Order>& getOrders() const { return orders_; }
 
 private:
+    // Only OrderBook is allowed to mutate the resting-order queue directly
+    // (it owns the traversal/matching loop in OrderBook::matchAgainst).
+    // Every other caller — including MatchingEngine — only ever needs
+    // read access, which the public const overload above provides.
+    friend class OrderBook;
+    std::list<Order>& getOrders() { return orders_; }
+
     Price price_;
     Quantity totalQuantity_;
-    
+
     // std::list guarantees iterator stability upon insertion and deletion,
     // which is essential for O(1) cancellations using an iterator map.
     std::list<Order> orders_;

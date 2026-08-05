@@ -52,7 +52,7 @@ TEST_F(CSVParserTest, ParseValidFile) {
 
 TEST_F(CSVParserTest, FileDoesNotExist) {
     EXPECT_THROW({
-        CSVParser::parseFile("non_existent_file.csv");
+        (void)CSVParser::parseFile("non_existent_file.csv");
     }, std::runtime_error);
 }
 
@@ -79,46 +79,46 @@ TEST(CSVParserValidation, RejectsNegativePrice) {
     std::string filename = writeSingleRowFile("test_neg_price.csv", "I,1,-5,10,B");
     // Without the fix, std::stoull("-5") wraps to 18446744073709551611
     // instead of throwing — verified directly against libc++/libstdc++.
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 
 TEST(CSVParserValidation, RejectsNegativeQuantity) {
     std::string filename = writeSingleRowFile("test_neg_qty.csv", "I,1,100,-10,B");
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 
 TEST(CSVParserValidation, RejectsInvalidActionChar) {
     std::string filename = writeSingleRowFile("test_bad_action.csv", "X,1,100,10,B");
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 
 TEST(CSVParserValidation, RejectsInvalidSideChar) {
     std::string filename = writeSingleRowFile("test_bad_side.csv", "I,1,100,10,X");
     // Previously silently defaulted to Side::Buy instead of rejecting.
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 
 TEST(CSVParserValidation, RejectsShortRow) {
     // Missing the Side field entirely.
     std::string filename = writeSingleRowFile("test_short_row.csv", "I,1,100,10");
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 
 TEST(CSVParserValidation, RejectsTrailingGarbageInNumericField) {
     std::string filename = writeSingleRowFile("test_trailing_garbage.csv", "I,1,100abc,10,B");
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 
 TEST(CSVParserValidation, RejectsQuantityOutOfUint32Range) {
     // 2^32 = 4294967296, one past Quantity's (uint32_t) max.
     std::string filename = writeSingleRowFile("test_qty_overflow.csv", "I,1,100,4294967296,B");
-    EXPECT_THROW(CSVParser::parseFile(filename), std::runtime_error);
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
     std::remove(filename.c_str());
 }
 

@@ -34,7 +34,7 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
         if (actions[i].actionType == ActionType::Insert)
             engine.processOrder(actions[i].order);
         else
-            engine.cancelOrder(actions[i].order.id);
+            (void)engine.cancelOrder(actions[i].order.id);
     }
 
     // --- Pass 2: Pure throughput measurement (NO per-op timers) ---
@@ -45,7 +45,7 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
             auto trades = engine.processOrder(actions[i].order);
             totalMatches += trades.size();
         } else {
-            engine.cancelOrder(actions[i].order.id);
+            (void)engine.cancelOrder(actions[i].order.id);
         }
     }
     double totalElapsedSec = totalTimer.elapsedSeconds();
@@ -61,7 +61,7 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
         if (actions[i].actionType == ActionType::Insert)
             engineForLatency.processOrder(actions[i].order);
         else
-            engineForLatency.cancelOrder(actions[i].order.id);
+            (void)engineForLatency.cancelOrder(actions[i].order.id);
     }
 
     for (size_t i = config.numWarmupActions; i < actions.size(); ++i) {
@@ -69,7 +69,7 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
         if (actions[i].actionType == ActionType::Insert)
             engineForLatency.processOrder(actions[i].order);
         else
-            engineForLatency.cancelOrder(actions[i].order.id);
+            (void)engineForLatency.cancelOrder(actions[i].order.id);
         latencies.push_back(opTimer.elapsedNanos());
     }
 
@@ -105,9 +105,27 @@ void printResult(const BenchmarkResult& result) {
     std::cout << "=========================================\n\n";
 }
 
+void printUsage(const char* programName, std::ostream& out) {
+    out << "Usage: " << programName << " [path/to/replay.csv]\n"
+        << "  (no arguments)   run the built-in synthetic workload suite\n"
+        << "                   (Random Prices, Heavy Cancels, Worst Case)\n"
+        << "  <path>           replay a historical/synthetic CSV workload from disk\n"
+        << "  -h, --help       show this message\n";
+}
+
 int main(int argc, char* argv[]) {
+    if (argc > 2) {
+        std::cerr << "Error: unexpected extra arguments.\n\n";
+        printUsage(argv[0], std::cerr);
+        return 1;
+    }
+
     if (argc == 2) {
         std::string filepath = argv[1];
+        if (filepath == "-h" || filepath == "--help") {
+            printUsage(argv[0], std::cout);
+            return 0;
+        }
         std::cout << "Loading replay file: " << filepath << "...\n";
         try {
             auto replayWorkload = engine::replay::CSVParser::parseFile(filepath);

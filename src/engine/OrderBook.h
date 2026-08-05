@@ -1,8 +1,13 @@
 #pragma once
 
 #include "engine/PriceLevel.h"
+#include "engine/Trade.h"
+#include <algorithm>
+#include <cassert>
 #include <map>
+#include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace engine {
 
@@ -52,12 +57,12 @@ public:
     }
 
     // True if `id` currently belongs to a resting (unfilled) order in the book.
-    bool hasOrder(OrderId id) const {
+    [[nodiscard]] bool hasOrder(OrderId id) const {
         return orderLocations_.find(id) != orderLocations_.end();
     }
 
     // Cancels an order by ID. Returns true if successful, false if not found.
-    bool cancelOrder(OrderId id) {
+    [[nodiscard]] bool cancelOrder(OrderId id) {
         auto locIt = orderLocations_.find(id);
         if (locIt == orderLocations_.end()) {
             return false;
@@ -85,19 +90,91 @@ public:
         return true;
     }
 
-    std::map<Price, PriceLevel, std::greater<Price>>& getBids() { return bids_; }
-    const std::map<Price, PriceLevel, std::greater<Price>>& getBids() const { return bids_; }
-    std::map<Price, PriceLevel, std::less<Price>>& getAsks() { return asks_; }
-    const std::map<Price, PriceLevel, std::less<Price>>& getAsks() const { return asks_; }
-
-    void removeOrderLocation(OrderId id) {
-        orderLocations_.erase(id);
+    // Matches `order` against the resting orders on the *opposite* side of
+    // the book (asks if order.side == Buy, bids if Sell), respecting strict
+    // price-time priority. If `limitPrice` holds a value, only resting
+    // orders priced at or better than it are matched (limit-order
+    // semantics: stop once the book crosses beyond the limit); if empty,
+    // the book is swept unconditionally until either side is exhausted
+    // (market-order semantics).
+    //
+    // Mutates `order.quantity` down as it fills, appends one Trade per fill
+    // to `trades`, and removes any resting order that becomes fully filled.
+    // Does NOT rest `order`'s remainder in the book on its own — the caller
+    // (MatchingEngine) decides whether an unfilled remainder should join
+    // the book (limit orders) or be discarded (market orders).
+    //
+    // This owns the traversal/mutation that used to be duplicated four
+    // times (once each for matchLimitBuy/Sell and matchMarketBuy/Sell) in
+    // MatchingEngine — living here means it can touch bids_/asks_/
+    // orderLocations_ directly instead of needing mutable public accessors.
+    void matchAgainst(Order& order, std::optional<Price> limitPrice, std::vector<Trade>& trades) {
+        if (order.side == Side::Buy) {
+            matchAgainstSide(order, asks_, /*isBuy=*/true, limitPrice, trades);
+        } else {
+            matchAgainstSide(order, bids_, /*isBuy=*/false, limitPrice, trades);
+        }
     }
 
+    // Read-only only: nothing outside OrderBook needs (or should have)
+    // mutable access to the price-level maps. addOrder/cancelOrder/
+    // matchAgainst all mutate bids_/asks_ directly as private members.
+    const std::map<Price, PriceLevel, std::greater<Price>>& getBids() const { return bids_; }
+    const std::map<Price, PriceLevel, std::less<Price>>& getAsks() const { return asks_; }
+
 private:
+    // Shared implementation for both sides of the book: bids_ and asks_ are
+    // different concrete map types (opposite comparators), but both expose
+    // the same iterator/erase interface, so one template covers both.
+    template <typename PriceLevelMap>
+    void matchAgainstSide(Order& order, PriceLevelMap& levels, bool isBuy,
+                           std::optional<Price> limitPrice, std::vector<Trade>& trades) {
+        auto priceLevelIt = levels.begin();
+        while (priceLevelIt != levels.end() && order.quantity > 0) {
+            if (limitPrice) {
+                Price levelPrice = priceLevelIt->first;
+                // Buy: can't pay more than the limit. Sell: won't accept less than it.
+                bool crossed = isBuy ? (levelPrice > *limitPrice) : (levelPrice < *limitPrice);
+                if (crossed) break;
+            }
+
+            PriceLevel& level = priceLevelIt->second;
+            auto& orders = level.getOrders();
+
+            auto orderIt = orders.begin();
+            while (orderIt != orders.end() && order.quantity > 0) {
+                Order& restingOrder = *orderIt;
+                Quantity tradeQty = std::min(order.quantity, restingOrder.quantity);
+                assert(tradeQty > 0 && tradeQty <= order.quantity && tradeQty <= restingOrder.quantity &&
+                       "tradeQty must be a positive amount bounded by both sides' remaining quantity");
+
+                trades.emplace_back(restingOrder.id, order.id, restingOrder.price, tradeQty);
+
+                order.quantity -= tradeQty;
+                restingOrder.quantity -= tradeQty;
+                level.decreaseQuantity(tradeQty);
+
+                if (restingOrder.quantity == 0) {
+                    orderLocations_.erase(restingOrder.id);
+                    orderIt = orders.erase(orderIt);
+                } else {
+                    // Resting order is partially filled; incoming order is
+                    // fully consumed (the outer while() will now exit).
+                    break;
+                }
+            }
+
+            if (level.isEmpty()) {
+                priceLevelIt = levels.erase(priceLevelIt);
+            } else {
+                ++priceLevelIt;
+            }
+        }
+    }
+
     std::map<Price, PriceLevel, std::greater<Price>> bids_; // Highest price first
     std::map<Price, PriceLevel, std::less<Price>> asks_;    // Lowest price first
-    
+
     std::unordered_map<OrderId, OrderLocation> orderLocations_;
 };
 

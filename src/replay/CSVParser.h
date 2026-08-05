@@ -27,7 +27,7 @@ public:
     // std::runtime_error naming the line and field, instead of silently
     // becoming a different (but structurally valid) order.
 
-    static std::vector<benchmark::BenchmarkAction> parseFile(const std::string& filepath) {
+    [[nodiscard]] static std::vector<benchmark::BenchmarkAction> parseFile(const std::string& filepath) {
         std::vector<benchmark::BenchmarkAction> actions;
         std::ifstream file(filepath);
 

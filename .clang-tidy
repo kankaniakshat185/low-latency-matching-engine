@@ -1,0 +1,21 @@
+---
+# Non-blocking in CI for now (see ci.yml's static-analysis job) — this is
+# the "report first, enforce once clean" rollout the audit recommended,
+# rather than turning on a strict check set and immediately failing builds
+# on pre-existing, un-triaged findings.
+Checks: >
+  bugprone-*,
+  clang-analyzer-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  cppcoreguidelines-*,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-avoid-c-arrays,
+  -modernize-use-trailing-return-type
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '(src)/.*'
+FormatStyle: file

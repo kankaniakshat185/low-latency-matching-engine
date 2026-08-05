@@ -76,14 +76,8 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
     size_t measuredActions = actions.size() - config.numWarmupActions;
     double throughput = measuredActions / totalElapsedSec;
 
-    return BenchmarkResult{
-        config.name,
-        measuredActions,
-        totalMatches,
-        totalElapsedSec,
-        throughput / 1e6,
-        calculateMetrics(latencies)
-    };
+    return BenchmarkResult{config.name,     measuredActions,  totalMatches,
+                           totalElapsedSec, throughput / 1e6, calculateMetrics(latencies)};
 }
 
 void printResult(const BenchmarkResult& result) {
@@ -134,11 +128,11 @@ int main(int argc, char* argv[]) {
             size_t measuredActions = totalActions - warmupActions;
 
             if (totalActions < 10000) {
-                std::cerr << "[Warning] Replay file has only " << totalActions 
+                std::cerr << "[Warning] Replay file has only " << totalActions
                           << " actions. Latency measurements will be statistically unreliable "
                           << "(recommend >= 10,000 actions for meaningful percentiles).\n";
             }
-            
+
             BenchmarkConfig replayConfig{"CSV Replay Workload", measuredActions, warmupActions};
             auto replayResult = runBenchmark(replayConfig, replayWorkload);
             printResult(replayResult);
@@ -150,7 +144,7 @@ int main(int argc, char* argv[]) {
     }
 
     WorkloadGenerator generator;
-    
+
     // Benchmark configuration
     size_t totalActions = 1'100'000;
     size_t warmupActions = 100'000;
@@ -161,7 +155,7 @@ int main(int argc, char* argv[]) {
     BenchmarkConfig worstCaseConfig{"Worst Case (Same Price)", measuredActions, warmupActions};
 
     std::cout << "Generating synthetic workloads (" << totalActions << " actions each)...\n\n";
-    
+
     auto randomWorkload = generator.generateRandom(totalActions);
     auto cancelsWorkload = generator.generateHeavyCancels(totalActions);
     auto worstCaseWorkload = generator.generateWorstCase(totalActions);

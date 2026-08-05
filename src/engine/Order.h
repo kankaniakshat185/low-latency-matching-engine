@@ -6,7 +6,7 @@ namespace engine {
 
 struct Order {
     OrderId id;
-    Price price;      // Irrelevant for Market orders, but included in struct to avoid polymorphism
+    Price price; // Irrelevant for Market orders, but included in struct to avoid polymorphism
     Quantity quantity;
     Side side;
     OrderType type;

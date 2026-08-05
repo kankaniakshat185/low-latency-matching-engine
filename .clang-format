@@ -1,0 +1,23 @@
+---
+# Matches this project's existing hand-written style: 4-space indent,
+# attached braces, unindented access specifiers, left-aligned references.
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+
+IndentWidth: 4
+ColumnLimit: 120
+AccessModifierOffset: -4
+NamespaceIndentation: None
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: All
+AllowShortLambdasOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+SortIncludes: Never
+DerivePointerAlignment: false
+SpacesBeforeTrailingComments: 1

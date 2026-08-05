@@ -38,7 +38,7 @@ TEST_F(MatchingEngineTest, ExactMatch) {
 
     auto t2 = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
     ASSERT_EQ(t2.size(), 1);
-    
+
     EXPECT_EQ(t2[0].makerOrderId, 1);
     EXPECT_EQ(t2[0].takerOrderId, 2);
     EXPECT_EQ(t2[0].quantity, 10);
@@ -47,10 +47,10 @@ TEST_F(MatchingEngineTest, ExactMatch) {
 
 TEST_F(MatchingEngineTest, PartialFillAggressive) {
     engine.processOrder(Order(1, 100, 5, Side::Sell, OrderType::Limit));
-    
+
     // Aggressive buy order is larger than resting liquidity
     auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
-    
+
     ASSERT_EQ(trades.size(), 1);
     EXPECT_EQ(trades[0].quantity, 5);
     EXPECT_EQ(trades[0].price, 100);
@@ -64,13 +64,13 @@ TEST_F(MatchingEngineTest, PartialFillAggressive) {
 
 TEST_F(MatchingEngineTest, PartialFillPassive) {
     engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
-    
+
     // Aggressive buy order is smaller than resting liquidity
     auto trades = engine.processOrder(Order(2, 100, 5, Side::Buy, OrderType::Limit));
-    
+
     ASSERT_EQ(trades.size(), 1);
     EXPECT_EQ(trades[0].quantity, 5);
-    
+
     // The passive order (1) should still have 5 qty left.
     auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Buy, OrderType::Limit));
     ASSERT_EQ(trades2.size(), 1);
@@ -81,15 +81,15 @@ TEST_F(MatchingEngineTest, PartialFillPassive) {
 TEST_F(MatchingEngineTest, PriceTimePriorityFIFO) {
     engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
     engine.processOrder(Order(2, 100, 10, Side::Sell, OrderType::Limit));
-    
+
     // Market order sweeps 15. Should take all 10 from order 1, and 5 from order 2.
     auto trades = engine.processOrder(Order(3, 0, 15, Side::Buy, OrderType::Market));
-    
+
     ASSERT_EQ(trades.size(), 2);
-    
+
     EXPECT_EQ(trades[0].makerOrderId, 1);
     EXPECT_EQ(trades[0].quantity, 10);
-    
+
     EXPECT_EQ(trades[1].makerOrderId, 2);
     EXPECT_EQ(trades[1].quantity, 5);
 }
@@ -97,10 +97,10 @@ TEST_F(MatchingEngineTest, PriceTimePriorityFIFO) {
 TEST_F(MatchingEngineTest, BetterPricePriority) {
     engine.processOrder(Order(1, 101, 10, Side::Sell, OrderType::Limit)); // Worse price
     engine.processOrder(Order(2, 100, 10, Side::Sell, OrderType::Limit)); // Better price
-    
+
     // Buy at 101 should match with 100 first
     auto trades = engine.processOrder(Order(3, 101, 10, Side::Buy, OrderType::Limit));
-    
+
     ASSERT_EQ(trades.size(), 1);
     EXPECT_EQ(trades[0].makerOrderId, 2);
     EXPECT_EQ(trades[0].price, 100);
@@ -110,7 +110,7 @@ TEST_F(MatchingEngineTest, CancellationSuccess) {
     engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
     bool success = engine.cancelOrder(1);
     EXPECT_TRUE(success);
-    
+
     auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
     EXPECT_TRUE(trades.empty()); // Order 1 was cancelled, so no match
 }
@@ -138,9 +138,7 @@ TEST_F(MatchingEngineTest, CancelAfterFullFillReturnsFalse) {
 // ---------------------------------------------------------
 
 TEST_F(MatchingEngineTest, ZeroQuantityOrderIsRejected) {
-    EXPECT_THROW(
-        engine.processOrder(Order(1, 100, 0, Side::Buy, OrderType::Limit)),
-        std::invalid_argument);
+    EXPECT_THROW(engine.processOrder(Order(1, 100, 0, Side::Buy, OrderType::Limit)), std::invalid_argument);
 }
 
 TEST_F(MatchingEngineTest, DuplicateOrderIdIsRejectedWhenResting) {
@@ -152,9 +150,7 @@ TEST_F(MatchingEngineTest, DuplicateOrderIdIsRejectedWhenResting) {
     // not silently overwrite order 1's entry in the cancel index (the
     // original bug: order 1 would stay physically in the book but become
     // permanently uncancellable).
-    EXPECT_THROW(
-        engine.processOrder(Order(1, 101, 5, Side::Sell, OrderType::Limit)),
-        std::invalid_argument);
+    EXPECT_THROW(engine.processOrder(Order(1, 101, 5, Side::Sell, OrderType::Limit)), std::invalid_argument);
 
     // Order 1 must still be exactly as it was: present and cancellable.
     EXPECT_TRUE(engine.cancelOrder(1));
@@ -168,9 +164,7 @@ TEST_F(MatchingEngineTest, DuplicateOrderIdIsRejectedEvenWhenItWouldSelfMatch) {
     // A Buy carrying the *same* id, aggressive enough to cross, must still
     // be rejected up front rather than matching against (and possibly
     // trading against) its own id.
-    EXPECT_THROW(
-        engine.processOrder(Order(1, 100, 10, Side::Buy, OrderType::Limit)),
-        std::invalid_argument);
+    EXPECT_THROW(engine.processOrder(Order(1, 100, 10, Side::Buy, OrderType::Limit)), std::invalid_argument);
 
     // The original resting order must be untouched.
     EXPECT_TRUE(engine.cancelOrder(1));
@@ -261,13 +255,13 @@ TEST(MatchingEngineFuzz, RandomOpsWithIdReusePreserveBookInvariants) {
 
 TEST_F(MatchingEngineTest, MarketOrderDiscardRemainder) {
     engine.processOrder(Order(1, 100, 5, Side::Sell, OrderType::Limit));
-    
+
     // Market buy for 10
     auto trades = engine.processOrder(Order(2, 0, 10, Side::Buy, OrderType::Market));
-    
+
     ASSERT_EQ(trades.size(), 1);
     EXPECT_EQ(trades[0].quantity, 5);
-    
+
     // The remaining 5 of the market order should be discarded. A new sell should NOT match it.
     auto trades2 = engine.processOrder(Order(3, 100, 5, Side::Sell, OrderType::Limit));
     EXPECT_TRUE(trades2.empty());
@@ -279,14 +273,11 @@ TEST_F(MatchingEngineTest, MarketOrderDiscardRemainder) {
 
 TEST(MatchingEngineIntegration, ReplaySimulation) {
     MatchingEngine engine;
-    
+
     // Simulate parsing a file of mixed actions
     std::vector<Order> fileReplay = {
-        Order(1, 100, 50, Side::Sell, OrderType::Limit),
-        Order(2, 101, 50, Side::Sell, OrderType::Limit),
-        Order(3, 99,  50, Side::Buy,  OrderType::Limit),
-        Order(4, 98,  50, Side::Buy,  OrderType::Limit)
-    };
+        Order(1, 100, 50, Side::Sell, OrderType::Limit), Order(2, 101, 50, Side::Sell, OrderType::Limit),
+        Order(3, 99, 50, Side::Buy, OrderType::Limit), Order(4, 98, 50, Side::Buy, OrderType::Limit)};
 
     for (const auto& o : fileReplay) {
         engine.processOrder(o);
@@ -297,7 +288,7 @@ TEST(MatchingEngineIntegration, ReplaySimulation) {
 
     // Aggressive sweeping market order
     auto trades = engine.processOrder(Order(5, 0, 100, Side::Buy, OrderType::Market));
-    
+
     // It should match 50 against Order 1 at price 100.
     // Order 2 was cancelled.
     // The remaining 50 of Order 5 is discarded.

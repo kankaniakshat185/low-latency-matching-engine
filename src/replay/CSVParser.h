@@ -45,8 +45,9 @@ public:
             if (line.empty() || (line[0] != 'I' && line[0] != 'C')) {
                 // It's a header, skip it.
             } else {
-                try { actions.push_back(parseLine(line)); }
-                catch (const std::exception& e) {
+                try {
+                    actions.push_back(parseLine(line));
+                } catch (const std::exception& e) {
                     throw std::runtime_error("Parse error on line " + std::to_string(lineNumber) + ": " + e.what());
                 }
             }
@@ -54,9 +55,11 @@ public:
 
         while (std::getline(file, line)) {
             ++lineNumber;
-            if (line.empty()) continue;
-            try { actions.push_back(parseLine(line)); }
-            catch (const std::exception& e) {
+            if (line.empty())
+                continue;
+            try {
+                actions.push_back(parseLine(line));
+            } catch (const std::exception& e) {
                 throw std::runtime_error("Parse error on line " + std::to_string(lineNumber) + ": " + e.what());
             }
         }
@@ -110,9 +113,8 @@ private:
             fields.push_back(token);
         }
         if (fields.size() != 5) {
-            throw std::runtime_error(
-                "Expected 5 fields (Action,OrderId,Price,Quantity,Side), got " +
-                std::to_string(fields.size()));
+            throw std::runtime_error("Expected 5 fields (Action,OrderId,Price,Quantity,Side), got " +
+                                     std::to_string(fields.size()));
         }
 
         // Action: must be exactly 'I' or 'C' — anything else (typo, blank,
@@ -133,7 +135,8 @@ private:
         }
         Side side = (fields[4][0] == 'S') ? Side::Sell : Side::Buy;
 
-        benchmark::ActionType actionType = (actionChar == 'C') ? benchmark::ActionType::Cancel : benchmark::ActionType::Insert;
+        benchmark::ActionType actionType =
+            (actionChar == 'C') ? benchmark::ActionType::Cancel : benchmark::ActionType::Insert;
 
         return {actionType, Order(orderId, price, quantity, side, OrderType::Limit)};
     }

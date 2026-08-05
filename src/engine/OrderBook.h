@@ -57,9 +57,7 @@ public:
     }
 
     // True if `id` currently belongs to a resting (unfilled) order in the book.
-    [[nodiscard]] bool hasOrder(OrderId id) const {
-        return orderLocations_.find(id) != orderLocations_.end();
-    }
+    [[nodiscard]] bool hasOrder(OrderId id) const { return orderLocations_.find(id) != orderLocations_.end(); }
 
     // Cancels an order by ID. Returns true if successful, false if not found.
     [[nodiscard]] bool cancelOrder(OrderId id) {
@@ -127,15 +125,16 @@ private:
     // different concrete map types (opposite comparators), but both expose
     // the same iterator/erase interface, so one template covers both.
     template <typename PriceLevelMap>
-    void matchAgainstSide(Order& order, PriceLevelMap& levels, bool isBuy,
-                           std::optional<Price> limitPrice, std::vector<Trade>& trades) {
+    void matchAgainstSide(Order& order, PriceLevelMap& levels, bool isBuy, std::optional<Price> limitPrice,
+                          std::vector<Trade>& trades) {
         auto priceLevelIt = levels.begin();
         while (priceLevelIt != levels.end() && order.quantity > 0) {
             if (limitPrice) {
                 Price levelPrice = priceLevelIt->first;
                 // Buy: can't pay more than the limit. Sell: won't accept less than it.
                 bool crossed = isBuy ? (levelPrice > *limitPrice) : (levelPrice < *limitPrice);
-                if (crossed) break;
+                if (crossed)
+                    break;
             }
 
             PriceLevel& level = priceLevelIt->second;

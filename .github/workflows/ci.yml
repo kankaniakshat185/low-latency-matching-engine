@@ -6,18 +6,148 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# All jobs point FetchContent at the same directory and cache it keyed on
+# CMakeLists.txt (which pins the GoogleTest version/URL) — otherwise every
+# job independently re-downloads and rebuilds GoogleTest from source.
+env:
+  FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.deps_cache
+
 jobs:
+  # Correctness: Debug build with ASan+UBSan, full test suite, plus a
+  # compile + runtime smoke test of engine_benchmark (previously only
+  # engine_tests had any CI coverage at all — the benchmark binary, and
+  # everything only it exercises like CSVParser in a real main(), had none).
   build_and_test:
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v3
 
+    - name: Cache GoogleTest FetchContent
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.FETCHCONTENT_BASE_DIR }}
+        key: ${{ runner.os }}-gtest-${{ hashFiles('CMakeLists.txt') }}
+
     - name: Configure CMake (Debug with Sanitizers)
       run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
 
-    - name: Build Engine and Tests
-      run: cmake --build build --target engine_tests -j 4
+    - name: Build Engine, Tests, and Benchmark
+      run: cmake --build build --target engine_tests engine_benchmark -j 4
 
     - name: Run Correctness Tests
       run: ./build/engine_tests
+
+    - name: Smoke-test the benchmark binary against sample replay data
+      run: ./build/engine_benchmark data/sample.csv
+
+    - name: Smoke-test benchmark CLI usage handling
+      run: |
+        ./build/engine_benchmark --help
+        if ./build/engine_benchmark a b; then
+          echo "expected engine_benchmark to reject extra arguments" >&2
+          exit 1
+        fi
+
+  # The configuration actually used to produce the published README/docs
+  # performance numbers (-O3, no sanitizers) was previously never verified
+  # to even compile in CI — only the Debug+sanitizer path was.
+  release_build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache GoogleTest FetchContent
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.FETCHCONTENT_BASE_DIR }}
+        key: ${{ runner.os }}-gtest-${{ hashFiles('CMakeLists.txt') }}
+
+    - name: Configure CMake (Release)
+      run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build Engine, Tests, and Benchmark (Release)
+      run: cmake --build build-release --target engine_tests engine_benchmark -j 4
+
+    - name: Run Correctness Tests (Release)
+      run: ./build-release/engine_tests
+
+    - name: Smoke-test the benchmark binary (Release)
+      run: ./build-release/engine_benchmark data/sample.csv
+
+  # Non-blocking by design: this is the "report first, enforce once clean"
+  # rollout for static analysis rather than turning on a strict check set
+  # (see .clang-tidy) and immediately failing on pre-existing findings that
+  # haven't been triaged yet.
+  static_analysis:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache GoogleTest FetchContent
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.FETCHCONTENT_BASE_DIR }}
+        key: ${{ runner.os }}-gtest-${{ hashFiles('CMakeLists.txt') }}
+
+    - name: Configure CMake (export compile commands)
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: Run clang-tidy
+      run: |
+        find src -name '*.cpp' -o -name '*.h' | xargs clang-tidy -p build
+
+  format_check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Check formatting (clang-format)
+      run: |
+        find src tests -name '*.cpp' -o -name '*.h' | xargs clang-format --style=file --dry-run -Werror
+
+  # Not a coverage gate (no threshold enforced) — just a visible, tracked
+  # number instead of "test coverage" being an unverifiable claim.
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache GoogleTest FetchContent
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.FETCHCONTENT_BASE_DIR }}
+        key: ${{ runner.os }}-gtest-${{ hashFiles('CMakeLists.txt') }}
+
+    - name: Install gcovr
+      run: pip install --quiet gcovr
+
+    - name: Configure CMake (coverage instrumentation)
+      # No CMAKE_BUILD_TYPE here on purpose: ENGINE_COVERAGE already forces
+      # -O0 -g --coverage on its own, and combining that with the
+      # Debug-build-type sanitizer flags (ASan/UBSan) is unnecessary
+      # overhead neither tool needs the other for.
+      run: cmake -B build-coverage -DENGINE_COVERAGE=ON
+
+    - name: Build Tests
+      run: cmake --build build-coverage --target engine_tests -j 4
+
+    - name: Run Tests
+      run: ./build-coverage/engine_tests
+
+    - name: Generate coverage summary
+      run: |
+        gcovr --root . --filter 'src/' --exclude '.*_deps.*' \
+          --print-summary --html-details build-coverage/coverage.html \
+          build-coverage >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-html
+        path: build-coverage/coverage.html

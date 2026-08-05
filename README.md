@@ -1,5 +1,7 @@
 # Ultra Low-Latency Matching Engine
 
+[![C++ CI](https://github.com/kankaniakshat185/low-latency-matching-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kankaniakshat185/low-latency-matching-engine/actions/workflows/ci.yml)
+
 This repository evaluates the architectural design and performance limits of a single-machine C++20 matching engine. The objective is to establish a rigorous, evidence-based methodology for implementing and measuring low-latency financial systems.
 
 ## Architecture Overview
@@ -29,6 +31,16 @@ The current implementation (Version 1.0) intentionally utilizes standard library
 
 *(Observation: The Worst-Case scenario bypasses O(log P) heap traversal, indicating that `std::map` lookup overhead is likely the primary bottleneck).*
 
+## Known Limitations & Non-Goals
+
+This is a single-machine, single-instrument, single-threaded matching engine — deliberately, per the project's phased scope (see [Documentation](#documentation) below). If you're evaluating it for anything beyond that scope, these are the boundaries as of the current phase, not oversights:
+
+*   **Single instrument.** `Order`/`Trade` carry no symbol field; one `MatchingEngine` is implicitly one order book.
+*   **No self-trade prevention.** Two crossing orders match regardless of where they originated.
+*   **No timestamps.** Orders and trades carry no arrival/execution time — the benchmark harness times *itself*, independent of any wall-clock event log.
+*   **No persistence, network layer, or risk checks.** This is an in-memory library and a CLI benchmark harness, not a running service.
+*   **Single-threaded.** No concurrent order ingestion; every call to `processOrder`/`cancelOrder` is expected to be sequential.
+
 ## Documentation
 Extensive documentation detailing architectural tradeoffs, design decisions, and optimization history is available in the [`public_docs/`](public_docs/) directory.
 
@@ -37,6 +49,8 @@ Extensive documentation detailing architectural tradeoffs, design decisions, and
 *   [Benchmarking Methodology](public_docs/benchmarking.md)
 *   [Design Decisions](public_docs/design_decisions.md)
 *   [Optimization History](public_docs/optimization_history.md)
+
+There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
 
 ## Build Instructions
 The project fetches GoogleTest automatically via CMake FetchContent on first build (requires a network connection). The engine and benchmark executables themselves have zero runtime dependencies.

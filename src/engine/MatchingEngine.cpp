@@ -8,14 +8,12 @@ namespace engine {
 
 std::vector<Trade> MatchingEngine::processOrder(Order order) {
     if (order.quantity == 0) {
-        throw std::invalid_argument(
-            "MatchingEngine::processOrder: order quantity must be greater than zero (id=" +
-            std::to_string(order.id) + ")");
+        throw std::invalid_argument("MatchingEngine::processOrder: order quantity must be greater than zero (id=" +
+                                    std::to_string(order.id) + ")");
     }
     if (book_.hasOrder(order.id)) {
-        throw std::invalid_argument(
-            "MatchingEngine::processOrder: duplicate OrderId " + std::to_string(order.id) +
-            " (already resting in the book)");
+        throw std::invalid_argument("MatchingEngine::processOrder: duplicate OrderId " + std::to_string(order.id) +
+                                    " (already resting in the book)");
     }
 
     std::vector<Trade> trades;
@@ -42,8 +40,6 @@ std::vector<Trade> MatchingEngine::processOrder(Order order) {
     return trades;
 }
 
-bool MatchingEngine::cancelOrder(OrderId id) {
-    return book_.cancelOrder(id);
-}
+bool MatchingEngine::cancelOrder(OrderId id) { return book_.cancelOrder(id); }
 
 } // namespace engine

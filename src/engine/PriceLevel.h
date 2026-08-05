@@ -27,7 +27,7 @@ public:
     Price getPrice() const { return price_; }
     Quantity getTotalQuantity() const { return totalQuantity_; }
     bool isEmpty() const { return orders_.empty(); }
-    
+
     // Reduces the total quantity (called during partial fills)
     void decreaseQuantity(Quantity qty) {
         // Quantity is unsigned: an out-of-invariant caller would otherwise
@@ -37,7 +37,7 @@ public:
         assert(qty <= totalQuantity_ && "PriceLevel::decreaseQuantity: qty exceeds the level's tracked total quantity");
         totalQuantity_ -= qty;
     }
-    
+
     // Read-only view for callers (tests, invariant checks) that only need
     // to inspect resting orders without mutating them.
     const std::list<Order>& getOrders() const { return orders_; }

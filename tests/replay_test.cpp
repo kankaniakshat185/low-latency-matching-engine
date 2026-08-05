@@ -21,14 +21,12 @@ protected:
         file.close();
     }
 
-    void TearDown() override {
-        std::remove(testFilename.c_str());
-    }
+    void TearDown() override { std::remove(testFilename.c_str()); }
 };
 
 TEST_F(CSVParserTest, ParseValidFile) {
     auto actions = CSVParser::parseFile(testFilename);
-    
+
     ASSERT_EQ(actions.size(), 3);
 
     // First action: Insert Buy
@@ -51,9 +49,7 @@ TEST_F(CSVParserTest, ParseValidFile) {
 }
 
 TEST_F(CSVParserTest, FileDoesNotExist) {
-    EXPECT_THROW({
-        (void)CSVParser::parseFile("non_existent_file.csv");
-    }, std::runtime_error);
+    EXPECT_THROW({ (void)CSVParser::parseFile("non_existent_file.csv"); }, std::runtime_error);
 }
 
 // ---------------------------------------------------------

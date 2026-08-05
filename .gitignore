@@ -1,11 +1,17 @@
 # Build artifacts
 build/
+build-*/
 bin/
 *.o
 *.out
 *.a
 *.dylib
 *.so
+# The compiled test/benchmark binaries themselves (extensionless, so the
+# patterns above don't catch them — one of these was previously committed
+# by accident; see git history around the "repo hygiene" cleanup).
+/engine_tests
+/engine_benchmark
 
 # IDEs and Editors
 .vscode/

@@ -1,9 +1,23 @@
 #include "engine/MatchingEngine.h"
 #include <algorithm>
+#include <cassert>
+#include <stdexcept>
+#include <string>
 
 namespace engine {
 
 std::vector<Trade> MatchingEngine::processOrder(Order order) {
+    if (order.quantity == 0) {
+        throw std::invalid_argument(
+            "MatchingEngine::processOrder: order quantity must be greater than zero (id=" +
+            std::to_string(order.id) + ")");
+    }
+    if (book_.hasOrder(order.id)) {
+        throw std::invalid_argument(
+            "MatchingEngine::processOrder: duplicate OrderId " + std::to_string(order.id) +
+            " (already resting in the book)");
+    }
+
     if (order.type == OrderType::Limit) {
         if (order.side == Side::Buy) {
             return matchLimitBuy(order);
@@ -41,13 +55,15 @@ std::vector<Trade> MatchingEngine::matchLimitBuy(Order& order) {
         while (orderIt != orders.end() && order.quantity > 0) {
             Order& restingOrder = *orderIt;
             Quantity tradeQty = std::min(order.quantity, restingOrder.quantity);
-            
+            assert(tradeQty > 0 && tradeQty <= order.quantity && tradeQty <= restingOrder.quantity &&
+                   "tradeQty must be a positive amount bounded by both sides' remaining quantity");
+
             trades.emplace_back(restingOrder.id, order.id, restingOrder.price, tradeQty);
-            
+
             order.quantity -= tradeQty;
             restingOrder.quantity -= tradeQty;
             level.decreaseQuantity(tradeQty);
-            
+
             if (restingOrder.quantity == 0) {
                 // Remove from order locations
                 book_.removeOrderLocation(restingOrder.id);
@@ -67,7 +83,10 @@ std::vector<Trade> MatchingEngine::matchLimitBuy(Order& order) {
     }
 
     if (order.quantity > 0) {
-        book_.addOrder(order);
+        // Guaranteed to succeed: processOrder() rejected duplicate ids up
+        // front, and matching never introduces a new id collision.
+        [[maybe_unused]] bool added = book_.addOrder(order);
+        assert(added && "OrderBook::addOrder rejected an id already validated as unique by processOrder");
     }
 
     return trades;
@@ -91,13 +110,15 @@ std::vector<Trade> MatchingEngine::matchLimitSell(Order& order) {
         while (orderIt != orders.end() && order.quantity > 0) {
             Order& restingOrder = *orderIt;
             Quantity tradeQty = std::min(order.quantity, restingOrder.quantity);
-            
+            assert(tradeQty > 0 && tradeQty <= order.quantity && tradeQty <= restingOrder.quantity &&
+                   "tradeQty must be a positive amount bounded by both sides' remaining quantity");
+
             trades.emplace_back(restingOrder.id, order.id, restingOrder.price, tradeQty);
-            
+
             order.quantity -= tradeQty;
             restingOrder.quantity -= tradeQty;
             level.decreaseQuantity(tradeQty);
-            
+
             if (restingOrder.quantity == 0) {
                 book_.removeOrderLocation(restingOrder.id);
                 orderIt = orders.erase(orderIt);
@@ -114,7 +135,10 @@ std::vector<Trade> MatchingEngine::matchLimitSell(Order& order) {
     }
 
     if (order.quantity > 0) {
-        book_.addOrder(order);
+        // Guaranteed to succeed: processOrder() rejected duplicate ids up
+        // front, and matching never introduces a new id collision.
+        [[maybe_unused]] bool added = book_.addOrder(order);
+        assert(added && "OrderBook::addOrder rejected an id already validated as unique by processOrder");
     }
 
     return trades;
@@ -133,13 +157,15 @@ std::vector<Trade> MatchingEngine::matchMarketBuy(Order& order) {
         while (orderIt != orders.end() && order.quantity > 0) {
             Order& restingOrder = *orderIt;
             Quantity tradeQty = std::min(order.quantity, restingOrder.quantity);
-            
+            assert(tradeQty > 0 && tradeQty <= order.quantity && tradeQty <= restingOrder.quantity &&
+                   "tradeQty must be a positive amount bounded by both sides' remaining quantity");
+
             trades.emplace_back(restingOrder.id, order.id, restingOrder.price, tradeQty);
-            
+
             order.quantity -= tradeQty;
             restingOrder.quantity -= tradeQty;
             level.decreaseQuantity(tradeQty);
-            
+
             if (restingOrder.quantity == 0) {
                 book_.removeOrderLocation(restingOrder.id);
                 orderIt = orders.erase(orderIt);
@@ -172,13 +198,15 @@ std::vector<Trade> MatchingEngine::matchMarketSell(Order& order) {
         while (orderIt != orders.end() && order.quantity > 0) {
             Order& restingOrder = *orderIt;
             Quantity tradeQty = std::min(order.quantity, restingOrder.quantity);
-            
+            assert(tradeQty > 0 && tradeQty <= order.quantity && tradeQty <= restingOrder.quantity &&
+                   "tradeQty must be a positive amount bounded by both sides' remaining quantity");
+
             trades.emplace_back(restingOrder.id, order.id, restingOrder.price, tradeQty);
-            
+
             order.quantity -= tradeQty;
             restingOrder.quantity -= tradeQty;
             level.decreaseQuantity(tradeQty);
-            
+
             if (restingOrder.quantity == 0) {
                 book_.removeOrderLocation(restingOrder.id);
                 orderIt = orders.erase(orderIt);

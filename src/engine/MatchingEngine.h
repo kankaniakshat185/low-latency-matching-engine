@@ -11,6 +11,9 @@ public:
     MatchingEngine() = default;
 
     // Process a new incoming order. Returns a list of generated trades.
+    // Throws std::invalid_argument if `order.quantity == 0` or if
+    // `order.id` already belongs to a resting order in the book (duplicate
+    // ids are rejected rather than silently corrupting the cancel index).
     std::vector<Trade> processOrder(Order order);
 
     // Cancel an existing order in the book. Returns true if successful.

@@ -2,6 +2,9 @@
 #include "engine/MatchingEngine.h"
 #include "engine/Order.h"
 #include "engine/Types.h"
+#include <random>
+#include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 using namespace engine;
@@ -115,6 +118,145 @@ TEST_F(MatchingEngineTest, CancellationSuccess) {
 TEST_F(MatchingEngineTest, CancellationFailure) {
     bool success = engine.cancelOrder(999);
     EXPECT_FALSE(success);
+}
+
+TEST_F(MatchingEngineTest, CancelAfterFullFillReturnsFalse) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+
+    // Fully fill order 1; it should be removed from the book entirely.
+    auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
+    ASSERT_EQ(trades.size(), 1);
+    EXPECT_EQ(trades[0].quantity, 10);
+
+    // Order 1 no longer rests anywhere; cancelling it must fail cleanly,
+    // not crash or silently cancel an unrelated order.
+    EXPECT_FALSE(engine.cancelOrder(1));
+}
+
+// ---------------------------------------------------------
+// Regression tests for validation gaps found in the staff audit
+// ---------------------------------------------------------
+
+TEST_F(MatchingEngineTest, ZeroQuantityOrderIsRejected) {
+    EXPECT_THROW(
+        engine.processOrder(Order(1, 100, 0, Side::Buy, OrderType::Limit)),
+        std::invalid_argument);
+}
+
+TEST_F(MatchingEngineTest, DuplicateOrderIdIsRejectedWhenResting) {
+    // Order 1 rests on the book (nothing to match against).
+    auto t1 = engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    EXPECT_TRUE(t1.empty());
+
+    // A second, unrelated order reusing id 1 must be rejected outright,
+    // not silently overwrite order 1's entry in the cancel index (the
+    // original bug: order 1 would stay physically in the book but become
+    // permanently uncancellable).
+    EXPECT_THROW(
+        engine.processOrder(Order(1, 101, 5, Side::Sell, OrderType::Limit)),
+        std::invalid_argument);
+
+    // Order 1 must still be exactly as it was: present and cancellable.
+    EXPECT_TRUE(engine.cancelOrder(1));
+    EXPECT_FALSE(engine.cancelOrder(1)); // now gone, second cancel fails cleanly
+}
+
+TEST_F(MatchingEngineTest, DuplicateOrderIdIsRejectedEvenWhenItWouldSelfMatch) {
+    // Order 1 rests as a resting Sell.
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+
+    // A Buy carrying the *same* id, aggressive enough to cross, must still
+    // be rejected up front rather than matching against (and possibly
+    // trading against) its own id.
+    EXPECT_THROW(
+        engine.processOrder(Order(1, 100, 10, Side::Buy, OrderType::Limit)),
+        std::invalid_argument);
+
+    // The original resting order must be untouched.
+    EXPECT_TRUE(engine.cancelOrder(1));
+}
+
+// After a random sequence of inserts (some deliberately reusing live ids,
+// which must be rejected) and cancels, the book's invariants must hold:
+//   - every price level's tracked total quantity equals the sum of the
+//     quantities of the orders actually resting in it
+//   - no OrderId appears more than once among resting orders
+// This is the single test that would have caught the duplicate-id
+// corruption bug on its own.
+static void assertBookInvariantsHold(const OrderBook& book) {
+    std::unordered_set<OrderId> seenIds;
+
+    auto checkSide = [&](const auto& levels) {
+        for (const auto& [price, level] : levels) {
+            Quantity summed = 0;
+            for (const auto& order : level.getOrders()) {
+                summed += order.quantity;
+                ASSERT_TRUE(seenIds.insert(order.id).second)
+                    << "OrderId " << order.id << " rests more than once in the book";
+            }
+            ASSERT_EQ(summed, level.getTotalQuantity())
+                << "PriceLevel " << price << " totalQuantity_ is out of sync with its resting orders";
+        }
+    };
+
+    checkSide(book.getBids());
+    checkSide(book.getAsks());
+}
+
+TEST(MatchingEngineFuzz, RandomOpsWithIdReusePreserveBookInvariants) {
+    MatchingEngine fuzzEngine;
+    std::mt19937_64 rng(1234);
+    std::uniform_int_distribution<Price> priceDist(9000, 11000);
+    std::uniform_int_distribution<Quantity> qtyDist(1, 1000);
+    std::uniform_int_distribution<int> sideDist(0, 1);
+    std::uniform_int_distribution<int> reuseDist(0, 9); // ~10% id reuse attempts
+
+    std::vector<OrderId> liveIds;
+    OrderId nextId = 1;
+
+    for (int i = 0; i < 20'000; ++i) {
+        bool attemptReuse = !liveIds.empty() && reuseDist(rng) == 0;
+        OrderId id;
+        bool expectDuplicateRejection = false;
+
+        if (attemptReuse) {
+            size_t idx = rng() % liveIds.size();
+            id = liveIds[idx];
+            // A "live" id may already have been fully matched away by an
+            // earlier iteration (it's no longer resting) — reusing it is
+            // then perfectly legitimate, not a collision. Only expect a
+            // rejection if it's still actually resting in the book.
+            expectDuplicateRejection = fuzzEngine.getOrderBook().hasOrder(id);
+            if (!expectDuplicateRejection) {
+                liveIds[idx] = liveIds.back();
+                liveIds.pop_back();
+            }
+        } else {
+            id = nextId++;
+        }
+
+        Side side = sideDist(rng) == 0 ? Side::Buy : Side::Sell;
+        Order order(id, priceDist(rng), qtyDist(rng), side, OrderType::Limit);
+
+        if (expectDuplicateRejection) {
+            EXPECT_THROW(fuzzEngine.processOrder(order), std::invalid_argument);
+        } else {
+            fuzzEngine.processOrder(order);
+            liveIds.push_back(id);
+        }
+
+        // Occasionally cancel a live order to exercise churn too.
+        if (!liveIds.empty() && reuseDist(rng) == 0) {
+            size_t idx = rng() % liveIds.size();
+            OrderId cancelId = liveIds[idx];
+            if (fuzzEngine.cancelOrder(cancelId)) {
+                liveIds[idx] = liveIds.back();
+                liveIds.pop_back();
+            }
+        }
+
+        assertBookInvariantsHold(fuzzEngine.getOrderBook());
+    }
 }
 
 TEST_F(MatchingEngineTest, MarketOrderDiscardRemainder) {

@@ -16,8 +16,23 @@ class OrderBook {
 public:
     OrderBook() = default;
 
-    // Adds a limit order to the book
-    void addOrder(const Order& order) {
+    // Adds a limit order to the book. Returns false (and leaves the book
+    // untouched) if `order.id` already belongs to a resting order.
+    //
+    // Without this check, a duplicate id would silently overwrite the
+    // earlier order's entry in orderLocations_: the earlier order stays
+    // physically in its PriceLevel's list (so it still trades normally when
+    // swept) but becomes permanently unreachable by id — any later
+    // cancelOrder(id) cancels the *new* order instead, and the original can
+    // never be cancelled again. No exception, no crash — just a silently
+    // corrupted cancel index. MatchingEngine::processOrder additionally
+    // rejects duplicate ids up front (via hasOrder) before any matching
+    // happens; this check is defense-in-depth for any other caller.
+    [[nodiscard]] bool addOrder(const Order& order) {
+        if (orderLocations_.find(order.id) != orderLocations_.end()) {
+            return false;
+        }
+
         if (order.side == Side::Buy) {
             auto it = bids_.find(order.price);
             if (it == bids_.end()) {
@@ -33,6 +48,12 @@ public:
             auto listIt = it->second.addOrder(order);
             orderLocations_[order.id] = {Side::Sell, order.price, listIt};
         }
+        return true;
+    }
+
+    // True if `id` currently belongs to a resting (unfilled) order in the book.
+    bool hasOrder(OrderId id) const {
+        return orderLocations_.find(id) != orderLocations_.end();
     }
 
     // Cancels an order by ID. Returns true if successful, false if not found.

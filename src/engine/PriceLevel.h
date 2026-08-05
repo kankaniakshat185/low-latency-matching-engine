@@ -1,13 +1,14 @@
 #pragma once
 
 #include "engine/Order.h"
+#include <cassert>
 #include <list>
 
 namespace engine {
 
 class PriceLevel {
 public:
-    PriceLevel(Price price) : price_(price), totalQuantity_(0) {}
+    explicit PriceLevel(Price price) : price_(price), totalQuantity_(0) {}
 
     // Add an order to the back of the price level (Time Priority)
     std::list<Order>::iterator addOrder(const Order& order) {
@@ -29,11 +30,19 @@ public:
     
     // Reduces the total quantity (called during partial fills)
     void decreaseQuantity(Quantity qty) {
+        // Quantity is unsigned: an out-of-invariant caller would otherwise
+        // wrap silently to a huge value instead of failing loudly. tradeQty
+        // is always derived from std::min() against a resting order's own
+        // quantity, so this should never trip outside of a caller bug.
+        assert(qty <= totalQuantity_ && "PriceLevel::decreaseQuantity: qty exceeds the level's tracked total quantity");
         totalQuantity_ -= qty;
     }
     
     // Allow the MatchingEngine to iterate and modify orders during matching
     std::list<Order>& getOrders() { return orders_; }
+    // Read-only view for callers (tests, invariant checks) that only need
+    // to inspect resting orders without mutating them.
+    const std::list<Order>& getOrders() const { return orders_; }
 
 private:
     Price price_;

@@ -1,12 +1,12 @@
-# The Regression I Kept
-
-*[DRAFT — complete end to end, ~6,200 words / ~30 min.]*
+# Inside a 14.5M Ops/sec C++ Order Book Matching Engine
 
 three versions into this project, i made one part of it ten percent slower. not on purpose, but once i understood why it happened, i kept the number and wrote up the explanation instead of quietly fixing it before anyone saw the regression. this is the story of everything that led up to that decision, starting from a much earlier and much dumber bug.
 
 what got built: a limit order book, from scratch, in c++20. price-time priority matching, partial fills, market orders. no external order-book library, no framework doing the actual matching underneath it — the whole thing, top to bottom, is code i wrote and then spent a long time trying to prove wrong.
 
 it mostly held up. the two places it didn't are worth more than the parts that worked first try.
+
+grab a coffee, this is a long one.
 
 ---
 
@@ -315,6 +315,16 @@ everything above, side by side, measured back to back in one run so the numbers 
 | same price | 5.38 m/s | 6.75 m/s | 6.68 m/s | 13.39 m/s | +149% |
 
 three to four times faster than where this started, depending on which workload you look at. and underneath that headline number, three separate, independently-measured reasons for it: heap allocation was worth roughly a third of total time, uniformly, but wasn't the reason one workload beat another. tree traversal was the biggest single piece of that gap, closing it most of the way. lookup-structure shape for cancellation closed most of what was left. none of those three answers were visible from a single "before and after" number — they only came apart because there were four separate, verified implementations to compare instead of one.
+
+---
+
+## auditing it a second time, after it was already "done"
+
+the table above felt like an ending. it wasn't, quite — before actually calling any of this finished, i went back and asked the same question the very first audit asked, months earlier: if i didn't trust this code, what would i go looking for.
+
+the coverage number said 99.2% line coverage, and it was tempting to just believe that meant "tested." it doesn't mean that. it means those lines executed at some point during some test — not that anyone deliberately checked the behavior on that line was correct. two real gaps were hiding behind a number that looked complete: cancelling an order id that was never inserted at all, on a book that already has other orders resting in it, and — the one i actually like finding — whether a price level, once its last order cancels or fills away, gets *erased* from the book's map or just left sitting there, empty, forever. nothing in the public interface behaves differently either way. an empty, un-erased price level is silently harmless to every trade the engine will ever produce. it would just sit there, taking up space, for the entire life of the process — the kind of leak that never shows up as a wrong answer, only as a process that mysteriously uses more memory the longer it runs. i had the exact accessor needed to check this directly (added months earlier for a completely different test), and had simply never pointed it at this specific question. twelve new tests later, both gaps were closed, across every version — not because coverage demanded it, coverage was already "good enough" — because being asked directly "is this actually checked" and coverage's own definition of "checked" turned out to be two different claims.
+
+the second thing was smaller in code but bigger in what it revealed: `clang-tidy` had been sitting in the ci pipeline this whole time, non-blocking, and had never once run on this machine — no llvm installed, a gap the ci writeup itself admitted honestly rather than pretended around. installed it. ran it for the first time. got two hard errors immediately, and for a second they looked exactly like real bugs — until the actual message turned out to be about missing standard-library headers, not missing code. two different clang installs on the same machine, disagreeing about where the standard library lives, is not a code problem, and figuring that out cost more time than fixing it did. once that was sorted: forty-four warnings about headers being used without being directly included — relying on some other header to drag them in as a side effect, which works fine until that other header ever changes what *it* includes, and then everything downstream breaks for a reason that has nothing to do with the code that actually broke. fixed all forty-four. one of them was a genuinely unused `#include` that had been sitting there the whole time, doing nothing. and past that: nothing. no dead code. no unused variables. no unreachable branches. a real, checked "clean" instead of an assumed one — which only means something because the check that produced it had never actually run before.
 
 ---
 

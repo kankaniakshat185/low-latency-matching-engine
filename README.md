@@ -55,7 +55,7 @@ The first working version uses `std::map`/`std::list`/`std::unordered_map` throu
 
 Worst-Case beating Random Prices by more than 2x here is the whole reason Phase 4 exists — it's a strong hint that `std::map`'s tree traversal is costing more than it looks like on paper, and Phase 4 below is what actually went and checked.
 
-## Phase 4: The Comparative Study (done)
+## Phase 4: The Comparative Study
 
 Phase 4 replaces the baseline's data structures one variable at a time, verifying correctness against the baseline after each change and benchmarking both wall-clock and (where available) hardware-counter evidence. Full detail is in [`public_docs/optimization_history.md`](public_docs/optimization_history.md) and the [Architecture Decision Log](public_docs/adr/README.md); the short version:
 

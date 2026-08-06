@@ -3,6 +3,28 @@
 ## Overview
 This document tracks the measured evolution of the matching engine. We maintain a strict versioned history rather than overwriting past results.
 
+## Final Comparison (all four versions, one run)
+
+Every row in the Historical Log below records a version against *its own* immediately-preceding baseline, each measured in its own separate run — the right way to isolate what one change bought, but not directly comparable across rows on absolute numbers. This table is different: all four versions run back-to-back in the same process, same run, same machine state (`variant_benchmark`, 2026-08-06) — the cleanest single comparison this project has of where 1.0 started and where 4.0 ended up.
+
+| Workload | 1.0 | 2.0 | 3.0 | 4.0 | Total (1.0→4.0) |
+|---|---|---|---|---|---|
+| Random Prices | 3.13 M/s | 4.35 M/s | 5.55 M/s | **12.33 M/s** | **+294%** |
+| Heavy Cancels | 4.23 M/s | 5.96 M/s | 7.37 M/s | **14.52 M/s** | **+243%** |
+| Worst Case (Same Price) | 5.38 M/s | 6.75 M/s | 6.68 M/s | **13.39 M/s** | **+149%** |
+
+Worst Case's dip at 3.0 (relative to 2.0) is real, not a typo — see ADR-0021 and the 3.0 row below for the mechanism, and ADR-0022 for how 4.0 closed it.
+
+The standing hypothesis from Phase 2 — *"why does Worst-Case-Same-Price consistently beat Random Prices?"* — tracked across this same run via the Worst/Random throughput ratio:
+
+| | 1.0 | 2.0 | 3.0 | 4.0 |
+|---|---|---|---|---|
+| Worst-Case / Random-Prices ratio | 1.719 | 1.552 | 1.204 | **1.086** |
+
+Four implementations later, the two workloads that started nearly a factor of two apart are within 9% of each other. Trade counts matched across all four versions on every workload in this run — the correctness question and the performance question stayed fully separable the entire way through, per the differential test suite's actual job (see `docs/14_testing_strategy.md` and `tests/differential_test.cpp`'s closing `AllFourVersionsMatchOnASharedWorkload` test).
+
+See [`interview_prep.md`](interview_prep.md) for a condensed, talking-points version of this whole table plus the reasoning behind it.
+
 ## Historical Log
 
 | Version | Environment | Optimization | Benchmark Before | Benchmark After | Profiler Evidence | Engineering Takeaway |

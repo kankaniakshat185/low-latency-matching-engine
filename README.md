@@ -59,6 +59,7 @@ Extensive documentation detailing architectural tradeoffs, design decisions, and
 *   [Design Decisions](public_docs/design_decisions.md)
 *   [Optimization History](public_docs/optimization_history.md)
 *   [Architecture Decision Log](public_docs/adr/README.md) — every decision, major or minor, individually dated
+*   [Interview Prep](public_docs/interview_prep.md) — a condensed, talking-points version of Phase 4
 
 There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
 

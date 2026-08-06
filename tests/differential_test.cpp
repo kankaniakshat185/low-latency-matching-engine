@@ -240,3 +240,27 @@ TEST(DifferentialTest, V4MatchesBaselineOnWorstCaseSamePrice) {
     assertLedgersMatch(expected, actual);
     EXPECT_GT(expected.size(), 0u);
 }
+
+// Phase 4, Step 5 — "bring it together": every test above checks one
+// variant against 1.0 in isolation. This one runs a single shared workload
+// through all four at once and cross-checks every pair against the
+// baseline in one place — the closing correctness statement for the whole
+// comparative study, not a new kind of check (a variant matching 1.0 and
+// 1.0 matching itself already implies all four agree pairwise; this test
+// exists to say so explicitly and keep saying so if that ever stops being
+// true).
+TEST(DifferentialTest, AllFourVersionsMatchOnASharedWorkload) {
+    constexpr size_t kActionCount = 300'000;
+    auto actions = generateRandomActions(/*seed=*/999, kActionCount);
+
+    auto v1 = runLedger<OrderBook>(actions);
+    auto v2 = runLedger<structures::OrderBookV2>(actions, kActionCount);
+    auto v3 = runLedger<structures::OrderBookV3>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount);
+    auto v4 = runLedger<structures::OrderBookV4>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount,
+                                                  kActionCount + 1);
+
+    assertLedgersMatch(v1, v2);
+    assertLedgersMatch(v1, v3);
+    assertLedgersMatch(v1, v4);
+    EXPECT_GT(v1.size(), 0u);
+}

@@ -32,3 +32,4 @@ Because six months from now nobody remembers *why* `std::list` won over a vector
 | [0014](0014-code-formatting-standard.md) | clang-format matched to existing style | Accepted | 2026-08-05 |
 | [0015](0015-license-choice.md) | MIT license | Accepted | 2026-08-05 |
 | [0016](0016-repo-hygiene-binary-artifacts.md) | Untrack the committed binary | Accepted | 2026-08-05 |
+| [0017](0017-order-pool-fixed-capacity.md) | Fixed-capacity pool for 2.0's order storage | Accepted | 2026-08-06 |

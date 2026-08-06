@@ -36,3 +36,15 @@ This document logs the primary architectural and algorithmic decisions that gove
 ## 8. CI as Five Jobs, Not One
 **Decision**: Debug+sanitizers (now also building the benchmark binary), a Release build, a non-blocking static-analysis pass, a formatting check, and a coverage report.
 **Rationale**: The original single job only ever checked `engine_tests` — the benchmark binary had zero coverage, and the `-O3` build behind every published number had never even been confirmed to compile. Static analysis starts non-blocking on purpose; failing every PR against findings nobody's triaged yet just teaches people to ignore it.
+
+## 9. Fixed-Capacity Pool for 2.0's Order Storage
+**Decision**: `OrderPool` (backing 2.0's intrusive order list) has a fixed capacity, sized upfront, with a hard error on exhaustion rather than growing or falling back to `malloc`.
+**Rationale**: A pool that can grow means an allocation event at an unpredictable moment — and the moment it actually needs to grow is precisely when the book is under the heaviest load, the worst possible time for a latency spike. A pool that can silently grow under load defeats the entire point of pooling.
+
+## 10. One Matching Engine, Templated Over the Book
+**Decision**: `MatchingEngine` became `MatchingEngineT<BookT>` (`using MatchingEngine = MatchingEngineT<OrderBook>;`), so a second book implementation (`OrderBookV2`, an intrusive linked list + pool allocator instead of `std::list`) runs through the identical engine logic with zero code changes elsewhere.
+**Rationale**: This is the composition-over-inheritance decision from entry 3 actually being cashed in rather than just asserted — "swap OrderBook's internals without touching MatchingEngine" was a stated goal since Phase 1 and untested until there was a second implementation to try it with. Every new variant is checked against the 1.0 baseline with differential testing (identical trade ledgers, same input) before its performance numbers are trusted — a faster implementation that's subtly wrong is worthless, so this stopped being optional the moment a second implementation existed.
+
+## 11. Real Hardware Counters, Not Just Wall-Clock
+**Decision**: Used Instruments' CPU Counters (via `xctrace`, driven from the command line) rather than a Linux VM's `perf`, and marked each benchmark run with `os_signpost` so hardware-counter data could be attributed to the correct variant/workload in one combined trace.
+**Rationale**: Apple Silicon's virtualization layer doesn't expose real hardware performance counters to a VM guest — `perf` in a VM here would produce numbers that don't reflect anything real. Profiling natively on the same chip the existing benchmark numbers already come from is also more methodologically correct, not just more convenient. Getting this working needed clearing real environment blockers (no Xcode installed, then Developer Mode disabled) that failed silently rather than with useful errors — worth knowing about before the next variant's profiling run.

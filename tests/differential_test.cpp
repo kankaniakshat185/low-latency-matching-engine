@@ -16,8 +16,10 @@
 #include "engine/MatchingEngine.h"
 #include "engine/Order.h"
 #include "engine/Trade.h"
+#include "structures/OrderBookV2.h"
 #include <cstdint>
 #include <random>
+#include <utility>
 #include <vector>
 
 using namespace engine;
@@ -66,10 +68,12 @@ std::vector<Action> generateRandomActions(uint64_t seed, size_t count) {
 }
 
 // Runs `actions` through a fresh MatchingEngineT<BookT> and returns the full
-// trade ledger, in the order trades were generated.
-template <typename BookT>
-std::vector<Trade> runLedger(const std::vector<Action>& actions) {
-    MatchingEngineT<BookT> engine;
+// trade ledger, in the order trades were generated. Extra arguments forward
+// to BookT's constructor — needed for variants like OrderBookV2 that take
+// an explicit pool capacity (ADR-0017).
+template <typename BookT, typename... BookCtorArgs>
+std::vector<Trade> runLedger(const std::vector<Action>& actions, BookCtorArgs&&... bookCtorArgs) {
+    MatchingEngineT<BookT> engine(std::forward<BookCtorArgs>(bookCtorArgs)...);
     std::vector<Trade> ledger;
     for (const auto& action : actions) {
         if (action.kind == Action::Kind::Insert) {
@@ -119,15 +123,45 @@ TEST(DifferentialTest, HarnessIsDeterministic) {
     EXPECT_GT(ledgerA.size(), 0u);
 }
 
-// TODO(Phase 4, Step 2): once OrderBookV2 exists —
-//
-// TEST(DifferentialTest, V2MatchesBaseline) {
-//     auto actions = generateRandomActions(42, 100000);
-//     auto expected = runLedger<OrderBook>(actions);
-//     auto actual = runLedger<OrderBookV2>(actions);
-//     assertLedgersMatch(expected, actual);
-// }
-//
-// ...and similarly for V3, V4 once they exist. Run this across the full
-// synthetic workload set (not just one seed) before trusting any benchmark
-// comparison between implementations.
+TEST(DifferentialTest, V2MatchesBaseline) {
+    // 200,000 actions, ~20% cancels — large enough to exercise deep books,
+    // heavy churn, and repeated price-level creation/emptying on both
+    // implementations. Pool capacity sized to the action count itself: a
+    // safe (if generous) upper bound, since the number of orders resting at
+    // once can never exceed the number ever inserted.
+    constexpr size_t kActionCount = 200'000;
+    auto actions = generateRandomActions(/*seed=*/1234, kActionCount);
+
+    auto expected = runLedger<OrderBook>(actions);
+    auto actual = runLedger<structures::OrderBookV2>(actions, kActionCount);
+
+    assertLedgersMatch(expected, actual);
+    EXPECT_GT(expected.size(), 0u);
+}
+
+TEST(DifferentialTest, V2MatchesBaselineOnWorstCaseSamePrice) {
+    // A second, adversarial workload: every order at the same price, which
+    // is exactly the scenario 2.0/3.0 are meant to help with. Correctness
+    // matters most precisely where the implementations diverge the most
+    // internally (one long std::list vs. one long intrusive list at a
+    // single price level).
+    constexpr size_t kActionCount = 50'000;
+    std::vector<Action> actions;
+    actions.reserve(kActionCount);
+    std::mt19937_64 rng(5678);
+    std::uniform_int_distribution<Quantity> qtyDist(1, 1000);
+    for (size_t i = 0; i < kActionCount; ++i) {
+        Side side = (i % 2 == 0) ? Side::Buy : Side::Sell;
+        actions.push_back(
+            {Action::Kind::Insert, Order(static_cast<OrderId>(i + 1), 10000, qtyDist(rng), side, OrderType::Limit)});
+    }
+
+    auto expected = runLedger<OrderBook>(actions);
+    auto actual = runLedger<structures::OrderBookV2>(actions, kActionCount);
+
+    assertLedgersMatch(expected, actual);
+    EXPECT_GT(expected.size(), 0u);
+}
+
+// TODO(Phase 4, Step 3 / Step 4): once OrderBookV3 / OrderBookV4 exist, add
+// the same two tests again against each, following this exact pattern.

@@ -31,6 +31,14 @@ The current implementation (Version 1.0) intentionally utilizes standard library
 
 *(Observation: The Worst-Case scenario bypasses O(log P) heap traversal, indicating that `std::map` lookup overhead is likely the primary bottleneck).*
 
+## Phase 4: The Comparative Study (in progress)
+
+Phase 4 replaces the baseline's data structures one variable at a time, verifying correctness against the baseline after each change and benchmarking both wall-clock and (where available) hardware-counter evidence. Full detail is in [`public_docs/optimization_history.md`](public_docs/optimization_history.md) and the [Architecture Decision Log](public_docs/adr/README.md); the short version:
+
+*   **2.0 (done)**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator. Price levels unchanged (still `std::map`). Verified against the 1.0 baseline with differential testing (byte-identical trade ledgers across 250,000+ randomized actions) before any number was trusted.
+*   **Result**: a consistent **+33–35% throughput improvement** across all three synthetic workloads, and — measured with real Instruments CPU Counters, not just wall-clock — every hardware bottleneck category (Cycles, Instruction Delivery, Discarded, Instruction Processing) improved in every workload. The Worst-Case/Random-Prices throughput ratio barely moved (1.668 → 1.655), meaning allocation cost, while real and substantial, is **not** what explains that persistent gap.
+*   **Next (3.0)**: replace `std::map` with a flat, tick-indexed array for price levels — the step actually positioned to test the cache-miss hypothesis above directly.
+
 ## Known Limitations & Non-Goals
 
 This is a single-machine, single-instrument, single-threaded matching engine — deliberately, per the project's phased scope (see [Documentation](#documentation) below). If you're evaluating it for anything beyond that scope, these are the boundaries as of the current phase, not oversights:
@@ -49,6 +57,7 @@ Extensive documentation detailing architectural tradeoffs, design decisions, and
 *   [Benchmarking Methodology](public_docs/benchmarking.md)
 *   [Design Decisions](public_docs/design_decisions.md)
 *   [Optimization History](public_docs/optimization_history.md)
+*   [Architecture Decision Log](public_docs/adr/README.md) — every decision, major or minor, individually dated
 
 There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
 
@@ -63,6 +72,9 @@ make
 # Run correctness regression suite
 ./engine_tests
 
-# Run performance benchmarks
+# Run performance benchmarks (1.0 baseline only — what the numbers above come from)
 ./engine_benchmark
+
+# Run the Phase 4 comparative study (1.0 vs 2.0, side by side)
+./variant_benchmark
 ```

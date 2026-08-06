@@ -23,6 +23,11 @@ This modularity isolates the matching logic from the internal data structures, a
 ## Tradeoffs
 *   **Flexibility vs. Performance:** The current baseline utilizes `std::map` and `std::list`. While this provides a mathematically correct O(log P) lookup and O(1) cancel guarantee, it sacrifices cache locality. This tradeoff was intentionally made to establish a verified behavioral baseline before introducing cache-aware structures.
 
+## Phase 4: the swap actually happening
+
+`MatchingEngine` is now `MatchingEngineT<BookT>`, a template — the concrete `MatchingEngine` used everywhere is `MatchingEngineT<OrderBook>`, but nothing about it is special-cased to that one book type. A second implementation, `OrderBookV2` (`src/structures/`), swaps in an intrusive linked list and a fixed-capacity pool allocator for order storage while keeping `std::map` for price levels — and it runs through the exact same `MatchingEngineT` with zero changes anywhere else, because both books expose the same public interface. This is the composition-over-inheritance bet from the top of this document actually paying off, not just an aspiration: every new variant is verified against the 1.0 baseline with differential testing (byte-identical trade ledgers on the same input) before its numbers are trusted.
+
 ## Future Work
-*   Replace `std::map` with an array-backed flat map to eliminate node allocations.
-*   Implement custom memory pools to eliminate OS page faults during burst allocations.
+*   3.0: replace `std::map` with an array-backed flat map to eliminate the remaining lookup-structure cost.
+*   4.0: reconsider the `OrderId → OrderLocation` cancellation index for cache-friendlier lookups.
+*   Full detail and results so far: [`public_docs/optimization_history.md`](optimization_history.md), [ADR-0017 through ADR-0019](adr/README.md).

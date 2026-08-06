@@ -22,3 +22,7 @@ The current algorithmic complexity for matching is O(K), where K represents the 
 ## Limitations
 *   Market orders currently sweep the book and discard any unfilled remainder. Future iterations may require more nuanced order types, but they are excluded here to maintain strict focus on the algorithmic core.
 *   No self-trade prevention, no multi-symbol support, no order timestamps — see the README's Known Limitations section for the complete, current list of explicit non-goals.
+
+## Correctness across implementations (Phase 4)
+
+The matching rules above are now implemented twice — once in `OrderBook` (1.0) and once in `OrderBookV2` (2.0, an intrusive-list-backed variant) — and are required to produce byte-identical trade ledgers given the same input. This is checked directly, not assumed: a differential test suite replays the same randomized action sequence through both and asserts the resulting trades match exactly, trade-for-trade, including under adversarial conditions (deliberate `OrderId` reuse, an all-same-price worst case). Every future variant (3.0, 4.0) is held to the same bar before its performance numbers are trusted.

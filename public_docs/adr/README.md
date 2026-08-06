@@ -33,3 +33,5 @@ Because six months from now nobody remembers *why* `std::list` won over a vector
 | [0015](0015-license-choice.md) | MIT license | Accepted | 2026-08-05 |
 | [0016](0016-repo-hygiene-binary-artifacts.md) | Untrack the committed binary | Accepted | 2026-08-05 |
 | [0017](0017-order-pool-fixed-capacity.md) | Fixed-capacity pool for 2.0's order storage | Accepted | 2026-08-06 |
+| [0018](0018-intrusive-list-order-storage.md) | 2.0 — intrusive linked list + pool allocator | Accepted | 2026-08-06 |
+| [0019](0019-instruments-signpost-correlation.md) | Correlating Instruments CPU Counters with `os_signpost` markers | Accepted | 2026-08-06 |

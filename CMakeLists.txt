@@ -77,3 +77,14 @@ add_custom_target(run_benchmarks
     COMMAND engine_benchmark
     DEPENDS engine_benchmark
 )
+
+# Phase 4 comparative study: benchmarks multiple OrderBook variants
+# side by side. Deliberately separate from engine_benchmark (see
+# compare_variants.cpp) so the README's published 1.0/1.0.1 numbers are
+# never at risk of changing because of this.
+add_executable(variant_benchmark
+    src/benchmark/compare_variants.cpp
+)
+target_include_directories(variant_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(variant_benchmark PRIVATE engine)
+target_compile_options(variant_benchmark PRIVATE ${ENGINE_WARNING_FLAGS})

@@ -27,3 +27,11 @@ The current metrics are subject to the following known limitations:
 *   **Observer Overhead**: The `std::chrono` syscall introduces measurable latency, which skews tail latency percentiles at the nanosecond scale.
 *   **Scheduler Jitter**: Threads are currently not pinned to isolated cores (`taskset`), meaning P99.9 latencies likely capture OS interrupts rather than algorithmic stalls.
 *   **Allocator Noise**: The use of standard heap allocation introduces page-fault variability.
+
+## Phase 4: Comparing Implementations, Not Just Measuring One
+
+A separate binary, `variant_benchmark`, runs the same three synthetic workloads through every `OrderBook` implementation side by side (1.0, 2.0, ...) using this same three-pass methodology, so the numbers are directly comparable. It's deliberately a different binary from `engine_benchmark` — the README's published 1.0/1.0.1 numbers come from `engine_benchmark` specifically, and this comparison should never be able to change that.
+
+Where available, wall-clock numbers are paired with real hardware-counter evidence (Instruments CPU Counters, correlated to the correct variant/workload via `os_signpost` markers — see ADR-0019) rather than staying at the wall-clock level alone. 2.0's results (a consistent +33–35% throughput gain, and every hardware bottleneck category improving) are in `optimization_history.md`.
+
+**Caveat that applies to any `variant_benchmark` run, not just 2.0's**: absolute throughput/latency numbers are sensitive to background system load in a way the *relative* comparison between variants (measured back-to-back, same process, same machine state) is not. Treat absolute figures from this binary as indicative, and re-measure on an idle machine before quoting them outside this project.

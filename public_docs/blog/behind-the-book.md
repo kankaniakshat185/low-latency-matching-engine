@@ -1,0 +1,286 @@
+# Behind the Book
+
+*[DRAFT — complete end to end, ~4,700 words / ~23 min. Title's a placeholder — change it to whatever fits. Was originally scoped for a 30-40 min read; the extra material discussed for that (CI/tooling build-out, the ADR practice as its own section, deeper differential-testing internals, the macOS-version doc-hygiene anecdote) hasn't been added yet — flagged rather than padded in to hit a number.]*
+
+three versions into this project, i made one part of it ten percent slower. not on purpose, but once i understood why it happened, i kept the number and wrote up the explanation instead of quietly fixing it before anyone saw the regression. this is the story of everything that led up to that decision, starting from a much earlier and much dumber bug.
+
+what got built: a limit order book, from scratch, in c++20. price-time priority matching, partial fills, market orders. no external order-book library, no framework doing the actual matching underneath it — the whole thing, top to bottom, is code i wrote and then spent a long time trying to prove wrong.
+
+it mostly held up. the two places it didn't are worth more than the parts that worked first try.
+
+---
+
+## what this thing actually does
+
+an exchange, underneath all the ui and the api and the marketing, is a matching engine deciding what an incoming order trades against, at what price, in what sequence. get the logic wrong and someone loses money on a trade that should never have happened. get it slow and someone else's order gets there first.
+
+i picked this as a project for a specific reason: it's small enough to hold completely in your head — no sprawling service mesh, no auth, no schema debates — but deep enough that "correct" and "fast" genuinely fight each other the moment you start caring about both. you can't fake your way through it by knowing a framework well. you either understand price-time priority or your test suite tells on you immediately.
+
+one rule going in, and i stuck to it harder than i expected to need to: depth over breadth. it would've been easy to bolt on multiple symbols, a rest api, ten order types, a live web dashboard, and have every one of those things be shallow. i wanted one thing taken as far as i could actually take it. single instrument, single thread, limit and market orders, nothing persisted, nothing networked — all of it in service of one question, answered as thoroughly as i could manage: what actually makes an order book fast, and how do you *prove* it instead of just claiming it.
+
+---
+
+## three classes, no inheritance
+
+```cpp
+class MatchingEngine {
+    OrderBook book_;
+};
+
+class OrderBook {
+    std::map<Price, PriceLevel, std::greater<Price>> bids_;
+    std::map<Price, PriceLevel, std::less<Price>> asks_;
+    std::unordered_map<OrderId, OrderLocation> orderLocations_;
+};
+
+class PriceLevel {
+    std::list<Order> orders_;
+    Quantity totalQuantity_;
+};
+```
+
+`MatchingEngine` owns one `OrderBook`. `OrderBook` keeps two maps of price levels, bids sorted highest-first and asks sorted lowest-first, so the best price is always sitting at `begin()`. each price level holds a list of the resting orders at that price, oldest first — that ordering *is* the "time" half of price-time priority.
+
+nothing here is virtual. i considered a polymorphic `Order` hierarchy — `LimitOrder`, `MarketOrder`, a virtual `match()` — for about as long as it took to remember that every virtual call is an indirect jump the branch predictor can't help with nearly as well as a direct one, and that polymorphic orders would need to live behind pointers instead of sitting by value in a list. so `Order` stays a flat struct, and the field that would only apply to limit orders gets a comment explaining itself instead of its own subclass:
+
+```cpp
+struct Order {
+    OrderId id;
+    Price price;      // irrelevant for Market orders, but included to avoid polymorphism
+    Quantity quantity;
+    Side side;
+    OrderType type;
+};
+```
+
+the one genuinely clever bit is cancellation. finding an order to cancel by scanning every price level is O(n), which falls apart the moment cancels are common — and in real markets they're extremely common. the fix is a hash map from `OrderId` straight to *where that order lives*: which side, which price, and a `std::list<Order>::iterator` pointing directly at it. `std::list` is the one standard container that guarantees an iterator survives insertions and deletions happening anywhere else in the list. cancel becomes a hash lookup and an erase at a known position. no traversal, nothing to invalidate.
+
+---
+
+## the rule the whole thing exists to enforce
+
+an incoming order sweeps the opposite side of the book — a buy against asks, a sell against bids — starting from the best price, until it's either fully filled or can't match anymore. every trade happens at the *resting* order's price, never the incoming order's, because the resting order got there first and that's what "priority" means.
+
+```cpp
+while (orderIt != orders.end() && order.quantity > 0) {
+    Order& restingOrder = *orderIt;
+    Quantity tradeQty = std::min(order.quantity, restingOrder.quantity);
+
+    trades.emplace_back(restingOrder.id, order.id, restingOrder.price, tradeQty);
+    order.quantity -= tradeQty;
+    restingOrder.quantity -= tradeQty;
+
+    if (restingOrder.quantity == 0) {
+        orderIt = orders.erase(orderIt);
+    } else {
+        break;
+    }
+}
+```
+
+that `break` looks almost decorative until you actually trace why it's there. `tradeQty` is the smaller of the two remaining quantities, so after subtracting it, at least one side is now at zero. if it wasn't the resting order, it has to be the incoming one — which means the surrounding loop's own condition is about to end it anyway. the `break` isn't strictly required for the code to behave correctly. it's there to say the invariant out loud, in the place it's true, instead of leaving it to be re-derived by whoever next has a reason to touch this function and doesn't happen to rediscover the same reasoning i just did.
+
+market orders run the identical loop with no price limit at all, and whatever doesn't fill gets thrown away rather than left resting. this logic used to exist as four separate, nearly-identical functions — one each for limit-buy, limit-sell, market-buy, market-sell — before i collapsed them into one, parameterized on side and an optional limit price. that wasn't really a speed decision. it was a "four copies of the same twenty lines is four places the same bug can hide" decision.
+
+---
+
+## a benchmark that was lying to me
+
+before optimizing anything i needed a number i actually trusted, and getting one turned out to be less obvious than i expected.
+
+three workloads, each leaning on a different part of the system: orders scattered across a wide price range (stresses price-level lookup), a 70/30 mix of inserts and cancels (stresses the cancellation path under churn), and every single order landing at the exact same price (removes price-level lookup entirely, stresses the linked-list append at one very deep level).
+
+and a warm-up pass first — ten percent of the workload, run and discarded before any timer starts, just to get the instruction cache and branch predictor out of their cold-start state.
+
+the part that actually bit me: my first version of this harness measured throughput and per-operation latency in the same pass, timing every individual operation while also totaling up a batch time. `std::chrono::high_resolution_clock` is not free — 20 to 40 nanoseconds of overhead per call is a reasonable estimate — and calling it twice per operation while trying to measure aggregate throughput meant the throughput number was partly measuring its own stopwatch. i caught it because the numbers looked off against the separately-measured latency figures, not because i'd reasoned my way to the bug in advance. fixed by splitting it into two completely separate passes: one timer wrapping the whole batch with zero per-operation instrumentation inside it, and a second pass on a fresh engine, replaying the identical sequence, timing every operation individually for the percentile numbers. every throughput figure anywhere in this project comes from a pass that never touches `std::chrono` until it's entirely finished.
+
+---
+
+## two bugs, both at the same door
+
+the engine worked. every test passed — exact matches, partial fills, price ordering, cancellations, the market-order sweep. i had numbers i believed in and a methodology built specifically to make sure i could believe them.
+
+so i turned around and audited the whole thing as if it belonged to someone whose work i didn't trust yet. found two real bugs, and both of them were sitting at the exact same kind of door: the point where something from outside the program gets let in.
+
+**the first** was in `OrderBook::addOrder`, which had no guard against a reused `OrderId`. insert an order whose id already belongs to something resting in the book, and the cancel index — the hash map from a few sections back — just overwrites its old entry. the original order stays physically in the book, still tradeable, but it's no longer reachable by id. cancel that id later and you cancel the *new* order instead, and the original can never be touched again. no exception. no crash. nothing in any output that looks wrong. the book just quietly starts lying about one specific order, forever.
+
+this isn't an edge case you'd have to go looking for either — a client retrying after a dropped acknowledgment, a corrupted replay file, an id generator with an off-by-one somewhere upstream, all produce exactly this.
+
+**the second** i genuinely didn't believe until i reproduced it myself. the csv replay parser fed price and quantity fields straight into `std::stoull`. `std::stoull("-5")` does not throw. it accepts the minus sign and hands back the two's-complement wraparound instead — `18446744073709551611` — and i wrote a standalone five-line program purely to watch that number appear on my own screen, because it felt like something i had to be misremembering. i wasn't. a negative price in a malformed row silently becomes a near-maximum `uint64_t` price instead of a parse error.
+
+both fixes share the same shape — reject loudly, instead of accepting quietly:
+
+```cpp
+// OrderBook::addOrder — refuse the collision instead of overwriting it
+if (orderLocations_.find(order.id) != orderLocations_.end()) {
+    return false;
+}
+```
+
+```cpp
+// CSVParser — the sign gets checked before stoull ever runs
+if (firstNonSpace != std::string::npos && token[firstNonSpace] == '-') {
+    throw std::runtime_error(std::string(fieldName) + " must not be negative: '" + token + "'");
+}
+```
+
+and then a fuzz test built specifically to make the first bug reproducible on demand: 20,000 randomized insert/cancel operations, roughly one in ten inserts deliberately reusing a live id, checking the book's invariants after every single one — every price level's tracked quantity matches its actual resting orders, no id shows up twice. that test is what should have caught this in the first place, and now it would, months before an audit thought to go looking.
+
+---
+
+## why four order books instead of one fast one
+
+correctness was in a place i actually trusted now — not "the tests pass" trusted, but "i went looking for ways to break it and mostly couldn't" trusted. the obvious next move was performance, and the obvious wrong way to chase it would have been picking one "optimized" version, swapping it in, and reporting a single before/after number.
+
+what i did instead: build several implementations of the same book, each one changing exactly one thing from the last, and require every new one to be *provably identical in behavior* to the original before its speed counts for anything. slower to build. also the only version of this where "removing heap allocation made it 34% faster" is a measured fact instead of one anecdote from one binary.
+
+the architecture made this cheap, which is the actual payoff of avoiding inheritance three sections ago — `MatchingEngine` became a template, so any book exposing the same handful of methods can be swapped in with nothing else in the codebase changing. and a differential test harness runs the identical random action sequence through two implementations side by side and demands the resulting trade ledgers match exactly:
+
+```cpp
+template <typename BookT, typename... Args>
+std::vector<Trade> runLedger(const std::vector<Action>& actions, Args&&... args) {
+    MatchingEngineT<BookT> engine(std::forward<Args>(args)...);
+    std::vector<Trade> ledger;
+    for (const auto& action : actions) {
+        if (action.kind == Action::Kind::Insert) {
+            auto trades = engine.processOrder(action.order);
+            ledger.insert(ledger.end(), trades.begin(), trades.end());
+        } else {
+            engine.cancelOrder(action.order.id);
+        }
+    }
+    return ledger;
+}
+```
+
+a faster implementation that's quietly wrong isn't worth having. this is what would catch that, before a single benchmark number gets written down anywhere.
+
+---
+
+## version two: nothing asks malloc for anything anymore
+
+the baseline stores resting orders in `std::list<Order>` — one heap allocation per order, and pointer-chasing through separately-allocated nodes every time you walk the list. version two changes only that. price levels stay `std::map`, unchanged, same lookup cost as before — isolate one variable, same discipline as everywhere else in this project.
+
+the replacement is an intrusive doubly-linked list, where the `prev`/`next` pointers live inside the node itself rather than in a separate container, backed by a pool that hands out fixed slots instead of calling `malloc`:
+
+```cpp
+uint32_t acquire(const Order& order) {
+    uint32_t index;
+    if (!freeList_.empty()) {
+        index = freeList_.back();
+        freeList_.pop_back();
+    } else if (highWaterMark_ < capacity_) {
+        index = highWaterMark_++;
+    } else {
+        throw std::runtime_error("OrderPool: capacity exhausted");
+    }
+    nodes_[index].order = order;
+    return index;
+}
+```
+
+one decision here needs explaining, because the tempting alternative is wrong for a reason that only becomes obvious once you think about what a pool is actually protecting you from. this pool has a fixed capacity, decided up front, and exhaustion is a hard error rather than an automatic grow. a pool that can silently grow means an allocation event at some unpredictable moment — and the moment a pool actually runs out is precisely when the book is under the most load, which is the single worst possible time to introduce a latency spike. letting it grow quietly defeats the entire reason to have a pool. size it deliberately for the workload you expect, and if that guess turns out wrong, find out immediately and loudly, not as an unexplained spike three months from now.
+
+this is also exactly the kind of manual lifetime management where a use-after-free likes to hide, so i didn't just run it once and move on. the differential test against a 200,000-action random workload passed on the first attempt. so did a second one built specifically around the all-same-price scenario, since that's where an intrusive list and a plain `std::list` diverge internally the most. still not satisfied, i ran a standalone 500,000-action stress pass under undefined-behavior sanitizer instrumentation on top of all that. also clean.
+
+**the number**: throughput up 33 to 35 percent, consistently, across every workload, with identical trade counts to the baseline every time.
+
+getting real hardware evidence behind that number turned into its own detour. this machine didn't have xcode installed — just the command-line tools, enough for a compiler but nothing that profiles. installed xcode with only the macos components checked (skipped every mobile platform, none of it relevant to profiling a command-line binary, and disk space was tight). pointed the system at it. tried to record a hardware-counter trace, and the target process launched and then did nothing — zero cpu usage, no error, for several minutes straight.
+
+the actual blocker was developer mode, disabled at the os level, silently refusing the profiler the access it needed. one command fixed it once i thought to check. none of the three things standing in the way — no xcode, the system still pointed at the wrong toolchain, developer mode off — failed with a message that pointed at itself. each one just quietly didn't work until the next thing got tried.
+
+worth the detour: every hardware category the profiler reports — cycles spent, front-end stalls, speculative work thrown away, back-end stalls — dropped, in every workload. removing heap allocation didn't save time in one isolated place. it measurably reduced cost across the entire pipeline, which is the kind of thing people say about allocation and cache locality all the time, except now i had a number attached to the claim instead of just repeating it.
+
+what it didn't do: touch the gap between the random-price workload and the same-price one. that ratio had been sitting at 1.668 since the very first baseline measurement, and after removing every bit of allocation cost from the order-storage layer, it moved to 1.650 — which is to say, it didn't really move. the standing theory — that `std::map`'s tree traversal explained why one workload consistently beat the other — hadn't been tested by this change at all. allocation was real, worth roughly a third of total runtime. it just wasn't the answer to that particular question.
+
+---
+
+## version three: the array that made one thing worse
+
+so: replace `std::map<Price, PriceLevel>` itself, same intrusive-list order storage carried forward unchanged from version two.
+
+the replacement is a flat array, indexed directly by price, with a bitmap tracking which prices currently have at least one resting order:
+
+```cpp
+size_t nextOccupiedFrom(size_t from) const {
+    size_t wordIdx = from / 64;
+    uint64_t word = occupancy[wordIdx] & (~0ULL << (from % 64));
+    while (true) {
+        if (word != 0) {
+            return wordIdx * 64 + std::countr_zero(word);
+        }
+        if (++wordIdx >= occupancy.size()) return levels.size();
+        word = occupancy[wordIdx];
+    }
+}
+```
+
+`std::countr_zero` — count trailing zeros — is a c++20 standard library function that maps to a single hardware instruction on nearly every modern cpu. instead of checking price levels for occupancy one at a time, this checks sixty-four of them per comparison and jumps straight to the first one that's actually there.
+
+a flat array needs something `std::map` never asked for, though: bounds. every incoming price has to sit inside a range decided at construction, or it gets rejected outright. i went back and forth on whether that was a real design decision or a compromise i was quietly excusing, and landed on the former — real exchanges enforce price bands and circuit breakers for entirely different, risk-management reasons, so a bounded price range isn't a toy simplification unique to this project. it's a constraint real systems already live with, for reasons that happen to line up.
+
+here's the part i want to actually sit with instead of skipping past: random prices improved 23.7% on top of version two, heavy cancels improved 24.2%, and the same-price workload got **10.3% slower.** not noise — checked it twice, and the hardware counters agreed directly: cycles up 8.6%, and the category tied to speculative-execution waste up 4.7%, specifically and only for that one workload. everything else improved in every category. this one got worse in two of them.
+
+the why turned out to be findable, and better than i expected once i actually looked instead of shrugging at it. that bitmap scan always starts from the array's edge — never from a cached "here's where the best price was a moment ago." with random prices or heavy churn, a lot of different price levels are occupied at once, so the scan almost always finds something within the first word or two — high density, short scan, close to free. the same-price workload has exactly one occupied price, ever, sitting near the middle of the configured range. every single order pays the full scan from the edge just to reach it, a cost `std::map` genuinely never charged, because a tree holding one entry is fast no matter where that entry theoretically sits.
+
+and this is the part that made the regression worth reporting instead of quietly patching: the ratio between the same-price and random-price throughput — stuck at 1.668, then 1.650, since the very first measurement — dropped to **1.195** with this change. the theory that had been sitting untested since the earliest baseline finally had real evidence behind it. it just didn't resolve the way i would have guessed going in. not "random prices alone catches up while the other workload holds steady" — both numbers moved, one up and one down, landing closer together than either side moving alone would explain. i only know that shape is wrong because i measured it instead of predicting it and stopping there.
+
+the fix is one i already know: cache the current best price instead of re-scanning from the edge every time, and only re-scan once that cached price actually empties. i'm fairly confident it closes most of the regression above without costing the workloads that already improved anything. it's deliberately not built yet, so this version's real, as-shipped cost got written down honestly first, instead of getting quietly smoothed over before anyone else saw it.
+
+---
+
+## version four: closing the loop i left open on purpose
+
+two changes, one version, because both of them are really the same idea wearing different clothes: stop treating a bounded, well-behaved domain like it needs a general-purpose data structure to handle it.
+
+the first change is the fix i already promised — a cached best price per side, updated the instant a price level goes from empty to occupied or back again, instead of re-derived by scanning from the array's edge on every single incoming order. the update itself is almost embarrassingly small:
+
+```cpp
+void noteInserted(size_t tick) {
+    if (bestTick == kNoTick || (isBid ? tick > bestTick : tick < bestTick)) {
+        bestTick = tick;
+    }
+}
+```
+
+one comparison, only run at the moment a price level actually starts existing. the other half — figuring out the *new* best price after the old one empties out — only has to run when the price that just emptied was the cached one, which in practice is rare. the expensive bitmap scan from version three doesn't go away. it just stops running on every order and starts running only when it's actually needed.
+
+the second change had been sitting in every version so far without anyone questioning it: the id-to-location cancellation index was still a `std::unordered_map`, since the very first line of code. a hash, a bucket walk, on every insert and every cancel. the same bounded-domain argument that justified the price array applies here too — a real exchange hands out order ids as a dense, increasing sequence from a gateway, not scattered randomly across the entire 64-bit space. so the hash map becomes a flat array, indexed directly by id, sized once at construction, exactly the same shape of decision as the price array two sections ago.
+
+writing the two changes was the fast part. sizing the id capacity for the benchmark was where i actually tripped: the first run threw an exception almost immediately, complaining an id was one past the array's configured bound. i'd sized it for one workload's worth of ids, forgetting the benchmark reuses the *same* id counter across all three synthetic workloads back to back, so by the time the third one starts, ids are already past double what i'd budgeted for. a bounded-domain design is only as safe as correctly reasoning about what the bound actually is — sizing it generously isn't the same thing as sizing it correctly, and this was a small, cheap reminder of that before it became an expensive one.
+
+the differential tests passed on the first real attempt, including the one built specifically to hammer the new cache — every order at one fixed price, so the best-price tick gets set exactly once and then should never need to move again for the rest of the run. that's precisely where an off-by-one in "only re-scan if the price that just emptied was the cached one" would show up as a wrong trade instead of just a slow one. it didn't.
+
+the number, and i checked it twice because it looked too good the first time: every workload roughly doubled on top of version three. random prices, up over double. heavy cancels, up over double. and the same-price workload — the one that got measurably *worse* in the last section — didn't just recover. it posted the single largest gain of the three. the regression i wrote up honestly instead of quietly patching became, one version later, the best result in the whole study.
+
+the hardware counters backed up the mechanism directly: the category tied to branch-misprediction cost, the one that got worse specifically on the same-price workload last time, dropped by more than half on that exact workload this time. that's the scan-from-the-edge cost actually leaving the hot path, visible on the chip, not just in the wall-clock number.
+
+it wasn't a clean sweep, though, and i want to say that as plainly as i said the regression two sections ago. a different bottleneck category — the one tied to the processor waiting on data it needs before it can keep going — went *up*, on every workload, most on the cancel-heavy one. i don't have a confirmed reason for that yet. my best guess is that the old hash-map lookup gave the cpu more independent, unrelated work it could speculate ahead on, and the new direct-index lookup replaced that with something shorter and more sequential — fewer wasted cycles, but also fewer places for the chip to hide latency while waiting. i wrote that down as a guess, not a finding, because it is one.
+
+the ratio i'd been tracking since the earliest baseline — same-price throughput divided by random-price throughput, stuck at 1.7-ish for two versions, then 1.2-ish after the array — closed to **1.09**. four versions in, the two workloads that started nearly twice as far apart as they could be now sit within a tenth of each other.
+
+---
+
+## four versions, one table
+
+everything above, side by side, measured back to back in one run so the numbers are actually comparable to each other and not stitched together from four separate days:
+
+| workload | v1 | v2 | v3 | v4 | total |
+|---|---|---|---|---|---|
+| random prices | 3.13 m/s | 4.35 m/s | 5.55 m/s | 12.33 m/s | +294% |
+| heavy cancels | 4.23 m/s | 5.96 m/s | 7.37 m/s | 14.52 m/s | +243% |
+| same price | 5.38 m/s | 6.75 m/s | 6.68 m/s | 13.39 m/s | +149% |
+
+three to four times faster than where this started, depending on which workload you look at. and underneath that headline number, three separate, independently-measured reasons for it: heap allocation was worth roughly a third of total time, uniformly, but wasn't the reason one workload beat another. tree traversal was the biggest single piece of that gap, closing it most of the way. lookup-structure shape for cancellation closed most of what was left. none of those three answers were visible from a single "before and after" number — they only came apart because there were four separate, verified implementations to compare instead of one.
+
+---
+
+## the actual thing i'd tell someone about this project
+
+the two moments that taught me the most weren't the wins.
+
+one was the audit — going back through code that already had a green test suite and asking it to prove itself again, harder, on purpose. the tests weren't lying. they just weren't asking the right questions yet. a reused order id and a negative number handed to `std::stoull` were both sitting there the whole time, both silent, both the kind of bug that never announces itself until something downstream is already wrong and nobody can say exactly when it started being wrong.
+
+the other was the ten percent. the sentence at the very top of this post — the one about making something slower on purpose, or at least keeping the number once it happened instead of hiding it — is describing that regression, and I'm glad I wrote it up the way I did instead of quietly patching it before publishing anything. because a version later, the exact same measurement that made version three look worse is what pointed straight at the fix, and the fix turned that same workload into the best result of the entire project. if I'd smoothed the number over the first time, i'd have gotten to the same fix eventually, probably. but i wouldn't have had the paper trail that made it obvious *why* it worked, and i wouldn't have trusted the fix nearly as much when it landed.
+
+four versions of this order book later, that's the pattern i keep landing back on: the measurement you don't like is usually the one worth writing down most carefully, because it's the one still pointing at something true.

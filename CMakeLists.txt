@@ -53,6 +53,7 @@ add_executable(engine_tests
     tests/engine_test.cpp
     tests/replay_test.cpp
     tests/differential_test.cpp
+    tests/structures_test.cpp
 )
 target_include_directories(engine_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(engine_tests PRIVATE engine gtest_main)

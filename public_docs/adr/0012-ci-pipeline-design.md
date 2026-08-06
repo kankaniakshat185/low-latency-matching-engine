@@ -34,3 +34,7 @@ A hard coverage threshold — fail under 90%, say — got skipped too. The numbe
 Every target that ships now gets built and smoke-tested, not just the test binary — which closes a real gap where the benchmark's own bugs could have regressed silently forever.
 
 Two things flagged rather than assumed clean: the static-analysis job's first real run is genuinely its first run, full stop — no way to dry-run `clang-tidy` locally without an LLVM install that was out of scope here. And the Debug+ASan+UBSan job has only been confirmed to *compile* on the local dev machine, not to run — Apple Clang 17's ASan hangs on any thrown exception on this particular machine, unrelated to this code, reproduced with a ten-line throw/catch loop. Correctness got verified through non-sanitized and UBSan-only builds instead. The first real push is the first real signal for that exact job.
+
+## Update (2026-08-06): `variant_benchmark` closed the same gap `engine_benchmark` closed here
+
+`build_and_test` and `release_build` now also build and smoke-test `variant_benchmark` (all four Phase 4 `OrderBook` variants), the same treatment `engine_benchmark` got when this ADR was first written — it had shipped with zero CI coverage in any configuration until this point. Full reasoning and the CLI change that made a fast smoke test possible (an action-count override, rather than running the full 1.1M-action study on a shared runner) is in ADR-0023.

@@ -32,8 +32,8 @@ jobs:
     - name: Configure CMake (Debug with Sanitizers)
       run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
 
-    - name: Build Engine, Tests, and Benchmark
-      run: cmake --build build --target engine_tests engine_benchmark -j 4
+    - name: Build Engine, Tests, and Benchmarks
+      run: cmake --build build --target engine_tests engine_benchmark variant_benchmark -j 4
 
     - name: Run Correctness Tests
       run: ./build/engine_tests
@@ -48,6 +48,17 @@ jobs:
           echo "expected engine_benchmark to reject extra arguments" >&2
           exit 1
         fi
+
+    # variant_benchmark (all four Phase 4 OrderBook variants, 1.0-4.0) had
+    # zero CI coverage until this line — never even confirmed to compile
+    # here, let alone run. A small action-count override (see main() in
+    # compare_variants.cpp) keeps this fast under sanitizer instrumentation;
+    # the point is exercising every variant end-to-end and catching a
+    # trade-count mismatch (nonzero exit code), not trusting timing numbers
+    # from a shared runner — see docs/09_benchmarking.md's "Threats to
+    # Validity" for why performance itself stays un-gated.
+    - name: Smoke-test the Phase 4 variant comparison (all four OrderBook implementations)
+      run: ./build/variant_benchmark 20000
 
   # The configuration actually used to produce the published README/docs
   # performance numbers (-O3, no sanitizers) was previously never verified
@@ -67,14 +78,17 @@ jobs:
     - name: Configure CMake (Release)
       run: cmake -B build-release -DCMAKE_BUILD_TYPE=Release
 
-    - name: Build Engine, Tests, and Benchmark (Release)
-      run: cmake --build build-release --target engine_tests engine_benchmark -j 4
+    - name: Build Engine, Tests, and Benchmarks (Release)
+      run: cmake --build build-release --target engine_tests engine_benchmark variant_benchmark -j 4
 
     - name: Run Correctness Tests (Release)
       run: ./build-release/engine_tests
 
     - name: Smoke-test the benchmark binary (Release)
       run: ./build-release/engine_benchmark data/sample.csv
+
+    - name: Smoke-test the Phase 4 variant comparison (Release)
+      run: ./build-release/variant_benchmark 20000
 
   # Non-blocking by design: this is the "report first, enforce once clean"
   # rollout for static analysis rather than turning on a strict check set

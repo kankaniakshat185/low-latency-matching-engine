@@ -211,7 +211,7 @@ TEST(DifferentialTest, V4MatchesBaseline) {
 
     auto expected = runLedger<OrderBook>(actions);
     auto actual = runLedger<structures::OrderBookV4>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount,
-                                                      kActionCount + 1);
+                                                     kActionCount + 1);
 
     assertLedgersMatch(expected, actual);
     EXPECT_GT(expected.size(), 0u);
@@ -235,7 +235,7 @@ TEST(DifferentialTest, V4MatchesBaselineOnWorstCaseSamePrice) {
 
     auto expected = runLedger<OrderBook>(actions);
     auto actual = runLedger<structures::OrderBookV4>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount,
-                                                      kActionCount + 1);
+                                                     kActionCount + 1);
 
     assertLedgersMatch(expected, actual);
     EXPECT_GT(expected.size(), 0u);
@@ -257,7 +257,7 @@ TEST(DifferentialTest, AllFourVersionsMatchOnASharedWorkload) {
     auto v2 = runLedger<structures::OrderBookV2>(actions, kActionCount);
     auto v3 = runLedger<structures::OrderBookV3>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount);
     auto v4 = runLedger<structures::OrderBookV4>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount,
-                                                  kActionCount + 1);
+                                                 kActionCount + 1);
 
     assertLedgersMatch(v1, v2);
     assertLedgersMatch(v1, v3);

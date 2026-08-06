@@ -218,8 +218,8 @@ private:
     size_t orderIdIndexOrThrow(OrderId id) const {
         if (id >= orderLocations_.size()) {
             throw std::out_of_range("OrderBookV4: order id " + std::to_string(id) +
-                                    " is >= the configured orderIdCapacity (" +
-                                    std::to_string(orderLocations_.size()) + ")");
+                                    " is >= the configured orderIdCapacity (" + std::to_string(orderLocations_.size()) +
+                                    ")");
         }
         return static_cast<size_t>(id);
     }

@@ -12,6 +12,8 @@
 #include "structures/OrderBookV3.h"
 #include "structures/OrderBookV4.h"
 #include "utils/Timer.h"
+#include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -137,9 +139,14 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
 // the *immediately preceding* row, not always against 1.0, since that's
 // what actually isolates "what did this one change buy us" per the Phase 4
 // methodology (each version changes exactly one thing from the last).
-void printComparison(const std::vector<std::pair<std::string, BenchmarkResult>>& results) {
+// Returns false if trade counts diverge across variants — CI's smoke-test
+// invocation (see the CI workflow) treats that as a hard failure via
+// main()'s exit code, even though this binary's *performance* numbers are
+// never CI-gated (see the "Threats to Validity" note in
+// docs/09_benchmarking.md — shared runners are too noisy for that).
+bool printComparison(const std::vector<std::pair<std::string, BenchmarkResult>>& results) {
     if (results.empty()) {
-        return;
+        return true;
     }
     std::cout << std::fixed << std::setprecision(2);
     std::cout << "--- " << results.front().second.name << " ---\n";
@@ -170,13 +177,26 @@ void printComparison(const std::vector<std::pair<std::string, BenchmarkResult>>&
     }
     std::cout << (allTradesMatch ? "Trade counts: all match." : "Trade counts: MISMATCH across variants!") << "\n";
     std::cout << "=========================================\n\n";
+    return allTradesMatch;
 }
 
-int main() {
+// Optional first argument overrides the total action count. Default
+// (1.1M) is the full Phase 4 study, used for local/manual runs; CI passes
+// a small override (see the CI workflow) purely as a fast crash/correctness
+// smoke test of all four variants in each build configuration — the point
+// is exercising the code path, not trusting timing numbers from a shared,
+// noisy runner (same reasoning as engine_benchmark's existing smoke test).
+int main(int argc, char** argv) {
     WorkloadGenerator generator;
 
     size_t totalActions = 1'100'000;
-    size_t warmupActions = 100'000;
+    if (argc > 1) {
+        totalActions = static_cast<size_t>(std::stoull(argv[1]));
+    }
+    // 10% warm-up, same methodology as engine_benchmark (ADR-0010) — a
+    // fraction rather than a fixed absolute count so a small CI override
+    // still leaves a non-trivial measured portion.
+    size_t warmupActions = std::max<size_t>(1, totalActions / 10);
     size_t measuredActions = totalActions - warmupActions;
     // Safe upper bound for 2.0/3.0's fixed-capacity pools (ADR-0017): the
     // number of orders resting at once can never exceed the number ever
@@ -226,7 +246,7 @@ int main() {
         randomResults.emplace_back("4.0", runBenchmark<EngineV4>(randomConfig, randomWorkload, kV3MinPrice, kV3MaxPrice,
                                                                  kV3TickSize, poolCapacity, orderIdCapacity));
     }
-    printComparison(randomResults);
+    bool allMatched = printComparison(randomResults);
 
     std::vector<std::pair<std::string, BenchmarkResult>> cancelsResults;
     {
@@ -244,10 +264,11 @@ int main() {
     }
     {
         BENCHMARK_SIGNPOST("4.0-HeavyCancels");
-        cancelsResults.emplace_back("4.0", runBenchmark<EngineV4>(cancelsConfig, cancelsWorkload, kV3MinPrice,
-                                                                  kV3MaxPrice, kV3TickSize, poolCapacity, orderIdCapacity));
+        cancelsResults.emplace_back(
+            "4.0", runBenchmark<EngineV4>(cancelsConfig, cancelsWorkload, kV3MinPrice, kV3MaxPrice, kV3TickSize,
+                                          poolCapacity, orderIdCapacity));
     }
-    printComparison(cancelsResults);
+    allMatched = printComparison(cancelsResults) && allMatched;
 
     std::vector<std::pair<std::string, BenchmarkResult>> worstResults;
     {
@@ -265,10 +286,15 @@ int main() {
     }
     {
         BENCHMARK_SIGNPOST("4.0-WorstCase");
-        worstResults.emplace_back("4.0", runBenchmark<EngineV4>(worstCaseConfig, worstCaseWorkload, kV3MinPrice,
-                                                                kV3MaxPrice, kV3TickSize, poolCapacity, orderIdCapacity));
+        worstResults.emplace_back(
+            "4.0", runBenchmark<EngineV4>(worstCaseConfig, worstCaseWorkload, kV3MinPrice, kV3MaxPrice, kV3TickSize,
+                                          poolCapacity, orderIdCapacity));
     }
-    printComparison(worstResults);
+    allMatched = printComparison(worstResults) && allMatched;
 
-    return 0;
+    if (!allMatched) {
+        std::cerr << "variant_benchmark: trade-count mismatch detected — see MISMATCH lines above.\n";
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
 }

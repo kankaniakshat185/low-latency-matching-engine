@@ -144,6 +144,26 @@ TEST(OrderBookV3Test, MarketSweepCanFullyDrainOneSideWithoutCrashing) {
     EXPECT_TRUE(book.addOrder(makeOrder(4, 175, 5, Side::Sell)));
 }
 
+// The mirror image of the test above: a market sell sweeping the bid side
+// all the way down to and including the price floor (tick 0). Bids and
+// asks are scanned in opposite directions, so this exercises a genuinely
+// different branch than the ask-side drain does — not the same code path
+// read backwards.
+TEST(OrderBookV3Test, MarketSweepCanFullyDrainBidSideDownToThePriceFloor) {
+    OrderBookV3 book(100, 200, 1, 10);
+    EXPECT_TRUE(book.addOrder(makeOrder(1, 100, 10, Side::Buy))); // price floor, tick 0
+    EXPECT_TRUE(book.addOrder(makeOrder(2, 150, 10, Side::Buy)));
+
+    Order sweeper = makeOrder(3, 0, 1000, Side::Sell);
+    std::vector<Trade> trades;
+    book.matchAgainst(sweeper, std::nullopt, trades);
+
+    EXPECT_EQ(trades.size(), 2u);
+    EXPECT_FALSE(book.hasOrder(1));
+    EXPECT_FALSE(book.hasOrder(2));
+    EXPECT_TRUE(book.addOrder(makeOrder(4, 125, 5, Side::Buy)));
+}
+
 // ---------------------------------------------------------------------
 // OrderBookV4 (4.0): same bounded price range as 3.0, plus a bounded
 // OrderId range for the flat cancellation index (ADR-0022).
@@ -203,6 +223,21 @@ TEST(OrderBookV4Test, MarketSweepCanFullyDrainOneSideWithoutCrashing) {
     // this is the scenario noteMaybeBestCleared exists for, taken all the
     // way to "there is no best tick left at all."
     EXPECT_TRUE(book.addOrder(makeOrder(4, 175, 5, Side::Sell)));
+}
+
+TEST(OrderBookV4Test, MarketSweepCanFullyDrainBidSideDownToThePriceFloor) {
+    OrderBookV4 book(100, 200, 1, 10, 10);
+    EXPECT_TRUE(book.addOrder(makeOrder(1, 100, 10, Side::Buy))); // price floor, tick 0
+    EXPECT_TRUE(book.addOrder(makeOrder(2, 150, 10, Side::Buy)));
+
+    Order sweeper = makeOrder(3, 0, 1000, Side::Sell);
+    std::vector<Trade> trades;
+    book.matchAgainst(sweeper, std::nullopt, trades);
+
+    EXPECT_EQ(trades.size(), 2u);
+    EXPECT_FALSE(book.hasOrder(1));
+    EXPECT_FALSE(book.hasOrder(2));
+    EXPECT_TRUE(book.addOrder(makeOrder(4, 125, 5, Side::Buy)));
 }
 
 TEST(OrderBookV4Test, CancelThenReinsertAtSameIdSucceeds) {

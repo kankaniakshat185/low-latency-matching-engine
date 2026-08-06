@@ -118,6 +118,48 @@ TEST(CSVParserValidation, RejectsQuantityOutOfUint32Range) {
     std::remove(filename.c_str());
 }
 
+TEST(CSVParserValidation, RejectsNonNumericToken) {
+    // "abc" has no leading digit at all, so std::stoull itself throws
+    // (a different code path from RejectsTrailingGarbageInNumericField
+    // above, where stoull succeeds on the leading digits and only the
+    // "consumed != token.size()" check catches the rest).
+    std::string filename = writeSingleRowFile("test_non_numeric.csv", "I,abc,100,10,B");
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
+    std::remove(filename.c_str());
+}
+
+TEST(CSVParserValidation, SkipsBlankLinesBetweenRows) {
+    std::string filename = "test_blank_line.csv";
+    std::ofstream file(filename);
+    file << "Action,OrderId,Price,Quantity,Side\n";
+    file << "I,1,100,10,B\n";
+    file << "\n"; // blank line — must be skipped, not treated as a malformed row
+    file << "I,2,101,20,S\n";
+    file.close();
+
+    auto actions = CSVParser::parseFile(filename);
+    ASSERT_EQ(actions.size(), 2);
+    EXPECT_EQ(actions[0].order.id, 1);
+    EXPECT_EQ(actions[1].order.id, 2);
+    std::remove(filename.c_str());
+}
+
+TEST(CSVParserValidation, RejectsMalformedFirstLineWhenThereIsNoHeader) {
+    // parseFile has a separate try/catch around the very first line's parse
+    // (needed because the first line does double duty as "maybe a header,
+    // maybe real data"). Every other test in this file supplies a header,
+    // so a malformed data row always lands on line 2+ and only exercises
+    // the main loop's try/catch. This one has no header at all — the file
+    // starts directly with a malformed action row — to reach the other one.
+    std::string filename = "test_bad_first_line.csv";
+    std::ofstream file(filename);
+    file << "I,1,100,10\n"; // starts with 'I', so it's treated as data, not a header — but only 4 fields
+    file.close();
+
+    EXPECT_THROW((void)CSVParser::parseFile(filename), std::runtime_error);
+    std::remove(filename.c_str());
+}
+
 TEST(CSVParserValidation, AcceptsWellFormedCancelRowWithZeroPlaceholders) {
     // Cancel rows legitimately carry 0,0 placeholders for Price/Quantity
     // (they're unused for cancels) — these are not negative and must

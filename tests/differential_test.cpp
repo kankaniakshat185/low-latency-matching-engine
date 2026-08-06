@@ -17,6 +17,7 @@
 #include "engine/Order.h"
 #include "engine/Trade.h"
 #include "structures/OrderBookV2.h"
+#include "structures/OrderBookV3.h"
 #include <cstdint>
 #include <random>
 #include <utility>
@@ -163,5 +164,43 @@ TEST(DifferentialTest, V2MatchesBaselineOnWorstCaseSamePrice) {
     EXPECT_GT(expected.size(), 0u);
 }
 
-// TODO(Phase 4, Step 3 / Step 4): once OrderBookV3 / OrderBookV4 exist, add
-// the same two tests again against each, following this exact pattern.
+// OrderBookV3's price range/tick size must cover every price the workload
+// generators can produce (they all draw from [9000, 11000] — see
+// WorkloadGenerator.h and generateRandomActions above); ADR-0020 covers why
+// this is a deliberate bound, not a limitation being papered over.
+constexpr Price kV3MinPrice = 9000;
+constexpr Price kV3MaxPrice = 11000;
+constexpr Price kV3TickSize = 1;
+
+TEST(DifferentialTest, V3MatchesBaseline) {
+    constexpr size_t kActionCount = 200'000;
+    auto actions = generateRandomActions(/*seed=*/1234, kActionCount);
+
+    auto expected = runLedger<OrderBook>(actions);
+    auto actual = runLedger<structures::OrderBookV3>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount);
+
+    assertLedgersMatch(expected, actual);
+    EXPECT_GT(expected.size(), 0u);
+}
+
+TEST(DifferentialTest, V3MatchesBaselineOnWorstCaseSamePrice) {
+    constexpr size_t kActionCount = 50'000;
+    std::vector<Action> actions;
+    actions.reserve(kActionCount);
+    std::mt19937_64 rng(5678);
+    std::uniform_int_distribution<Quantity> qtyDist(1, 1000);
+    for (size_t i = 0; i < kActionCount; ++i) {
+        Side side = (i % 2 == 0) ? Side::Buy : Side::Sell;
+        actions.push_back(
+            {Action::Kind::Insert, Order(static_cast<OrderId>(i + 1), 10000, qtyDist(rng), side, OrderType::Limit)});
+    }
+
+    auto expected = runLedger<OrderBook>(actions);
+    auto actual = runLedger<structures::OrderBookV3>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount);
+
+    assertLedgersMatch(expected, actual);
+    EXPECT_GT(expected.size(), 0u);
+}
+
+// TODO(Phase 4, Step 4): once OrderBookV4 exists, add the same two tests
+// again against it, following this exact pattern.

@@ -8,10 +8,12 @@
 #include "benchmark/WorkloadGenerator.h"
 #include "engine/MatchingEngine.h"
 #include "structures/OrderBookV2.h"
+#include "structures/OrderBookV3.h"
 #include "utils/Timer.h"
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <utility>
 
 // os_signpost marks each variant/workload run as a named interval so
 // Instruments (CPU Counters, via `xctrace`) can attribute hardware-counter
@@ -127,24 +129,43 @@ BenchmarkResult runBenchmark(const BenchmarkConfig& config, const std::vector<Be
                            totalElapsedSec, throughput / 1e6, calculateMetrics(latencies)};
 }
 
-void printComparison(const BenchmarkResult& v1, const BenchmarkResult& v2) {
+// Prints one row per variant for a single workload. `results` must be in
+// version order (1.0, 2.0, 3.0, ...) — each row's delta is computed against
+// the *immediately preceding* row, not always against 1.0, since that's
+// what actually isolates "what did this one change buy us" per the Phase 4
+// methodology (each version changes exactly one thing from the last).
+void printComparison(const std::vector<std::pair<std::string, BenchmarkResult>>& results) {
+    if (results.empty()) {
+        return;
+    }
     std::cout << std::fixed << std::setprecision(2);
-    std::cout << "--- " << v1.name << " ---\n";
-    std::cout << std::left << std::setw(20) << "" << std::right << std::setw(16) << "1.0 (baseline)" << std::setw(20)
-              << "2.0 (pool+list)" << std::setw(12) << "delta\n";
-    double throughputDeltaPct = (v2.throughputMillions / v1.throughputMillions - 1.0) * 100.0;
-    std::cout << std::left << std::setw(20) << "Throughput (M/s)" << std::right << std::setw(16)
-              << v1.throughputMillions << std::setw(20) << v2.throughputMillions << std::setw(11) << std::showpos
-              << throughputDeltaPct << "%" << std::noshowpos << "\n";
-    std::cout << std::left << std::setw(20) << "P50 latency (ns)" << std::right << std::setw(16) << v1.latency.p50
-              << std::setw(20) << v2.latency.p50 << "\n";
-    std::cout << std::left << std::setw(20) << "P99 latency (ns)" << std::right << std::setw(16) << v1.latency.p99
-              << std::setw(20) << v2.latency.p99 << "\n";
-    std::cout << std::left << std::setw(20) << "Max latency (ns)" << std::right << std::setw(16) << v1.latency.max
-              << std::setw(20) << v2.latency.max << "\n";
-    std::cout << std::left << std::setw(20) << "Trades generated" << std::right << std::setw(16) << v1.tradesGenerated
-              << std::setw(20) << v2.tradesGenerated
-              << (v1.tradesGenerated == v2.tradesGenerated ? "  (match)" : "  (MISMATCH!)") << "\n";
+    std::cout << "--- " << results.front().second.name << " ---\n";
+    std::cout << std::left << std::setw(14) << "Version" << std::right << std::setw(14) << "Throughput" << std::setw(10)
+              << "vs prev" << std::setw(10) << "P50 (ns)" << std::setw(10) << "P99 (ns)" << std::setw(12) << "Max (ns)"
+              << std::setw(12) << "Trades\n";
+
+    const BenchmarkResult* prev = nullptr;
+    for (const auto& [label, result] : results) {
+        std::cout << std::left << std::setw(14) << label << std::right << std::setw(11) << result.throughputMillions
+                  << " M/s" << std::setw(9);
+        if (prev != nullptr) {
+            double deltaPct = (result.throughputMillions / prev->throughputMillions - 1.0) * 100.0;
+            std::cout << std::showpos << deltaPct << std::noshowpos << "%";
+        } else {
+            std::cout << "--";
+        }
+        std::cout << std::setw(10) << result.latency.p50 << std::setw(10) << result.latency.p99 << std::setw(12)
+                  << result.latency.max << std::setw(12) << result.tradesGenerated << "\n";
+        prev = &result;
+    }
+
+    bool allTradesMatch = true;
+    for (size_t i = 1; i < results.size(); ++i) {
+        if (results[i].second.tradesGenerated != results.front().second.tradesGenerated) {
+            allTradesMatch = false;
+        }
+    }
+    std::cout << (allTradesMatch ? "Trade counts: all match." : "Trade counts: MISMATCH across variants!") << "\n";
     std::cout << "=========================================\n\n";
 }
 
@@ -154,9 +175,15 @@ int main() {
     size_t totalActions = 1'100'000;
     size_t warmupActions = 100'000;
     size_t measuredActions = totalActions - warmupActions;
-    // Safe upper bound for 2.0's fixed-capacity pool (ADR-0017): the number
-    // of orders resting at once can never exceed the number ever inserted.
+    // Safe upper bound for 2.0/3.0's fixed-capacity pools (ADR-0017): the
+    // number of orders resting at once can never exceed the number ever
+    // inserted.
     size_t poolCapacity = totalActions;
+    // OrderBookV3's bounded price range (ADR-0020) must cover every price
+    // the synthetic workloads can produce — matches WorkloadGenerator.h.
+    constexpr Price kV3MinPrice = 9000;
+    constexpr Price kV3MaxPrice = 11000;
+    constexpr Price kV3TickSize = 1;
 
     BenchmarkConfig randomConfig{"Random Prices", measuredActions, warmupActions};
     BenchmarkConfig cancelsConfig{"Heavy Cancels", measuredActions, warmupActions};
@@ -168,37 +195,55 @@ int main() {
     auto worstCaseWorkload = generator.generateWorstCase(totalActions);
 
     using EngineV2 = MatchingEngineT<structures::OrderBookV2>;
+    using EngineV3 = MatchingEngineT<structures::OrderBookV3>;
 
-    BenchmarkResult randomV1, randomV2, cancelsV1, cancelsV2, worstV1, worstV2;
+    std::vector<std::pair<std::string, BenchmarkResult>> randomResults;
     {
         BENCHMARK_SIGNPOST("1.0-Random");
-        randomV1 = runBenchmark<MatchingEngine>(randomConfig, randomWorkload);
+        randomResults.emplace_back("1.0", runBenchmark<MatchingEngine>(randomConfig, randomWorkload));
     }
     {
         BENCHMARK_SIGNPOST("2.0-Random");
-        randomV2 = runBenchmark<EngineV2>(randomConfig, randomWorkload, poolCapacity);
+        randomResults.emplace_back("2.0", runBenchmark<EngineV2>(randomConfig, randomWorkload, poolCapacity));
     }
-    printComparison(randomV1, randomV2);
+    {
+        BENCHMARK_SIGNPOST("3.0-Random");
+        randomResults.emplace_back("3.0", runBenchmark<EngineV3>(randomConfig, randomWorkload, kV3MinPrice, kV3MaxPrice,
+                                                                 kV3TickSize, poolCapacity));
+    }
+    printComparison(randomResults);
 
+    std::vector<std::pair<std::string, BenchmarkResult>> cancelsResults;
     {
         BENCHMARK_SIGNPOST("1.0-HeavyCancels");
-        cancelsV1 = runBenchmark<MatchingEngine>(cancelsConfig, cancelsWorkload);
+        cancelsResults.emplace_back("1.0", runBenchmark<MatchingEngine>(cancelsConfig, cancelsWorkload));
     }
     {
         BENCHMARK_SIGNPOST("2.0-HeavyCancels");
-        cancelsV2 = runBenchmark<EngineV2>(cancelsConfig, cancelsWorkload, poolCapacity);
+        cancelsResults.emplace_back("2.0", runBenchmark<EngineV2>(cancelsConfig, cancelsWorkload, poolCapacity));
     }
-    printComparison(cancelsV1, cancelsV2);
+    {
+        BENCHMARK_SIGNPOST("3.0-HeavyCancels");
+        cancelsResults.emplace_back("3.0", runBenchmark<EngineV3>(cancelsConfig, cancelsWorkload, kV3MinPrice,
+                                                                  kV3MaxPrice, kV3TickSize, poolCapacity));
+    }
+    printComparison(cancelsResults);
 
+    std::vector<std::pair<std::string, BenchmarkResult>> worstResults;
     {
         BENCHMARK_SIGNPOST("1.0-WorstCase");
-        worstV1 = runBenchmark<MatchingEngine>(worstCaseConfig, worstCaseWorkload);
+        worstResults.emplace_back("1.0", runBenchmark<MatchingEngine>(worstCaseConfig, worstCaseWorkload));
     }
     {
         BENCHMARK_SIGNPOST("2.0-WorstCase");
-        worstV2 = runBenchmark<EngineV2>(worstCaseConfig, worstCaseWorkload, poolCapacity);
+        worstResults.emplace_back("2.0", runBenchmark<EngineV2>(worstCaseConfig, worstCaseWorkload, poolCapacity));
     }
-    printComparison(worstV1, worstV2);
+    {
+        BENCHMARK_SIGNPOST("3.0-WorstCase");
+        worstResults.emplace_back("3.0", runBenchmark<EngineV3>(worstCaseConfig, worstCaseWorkload, kV3MinPrice,
+                                                                kV3MaxPrice, kV3TickSize, poolCapacity));
+    }
+    printComparison(worstResults);
 
     return 0;
 }

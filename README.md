@@ -21,7 +21,7 @@ This project adheres to a strict principle: **No engineering conclusion is drawn
 
 The current implementation (Version 1.0) intentionally utilizes standard library containers (`std::map`, `std::list`) to establish a mathematically correct, verified baseline.
 
-**Environment**: Apple M2 (ARM64), macOS 14.5, `clang++ -O3 -std=c++20`
+**Environment**: Apple M2 (ARM64), macOS 26.5.1, `clang++ -O3 -std=c++20`
 
 | Workload (1M Actions) | Throughput | Median Latency | P99 Latency |
 | :--- | :--- | :--- | :--- |
@@ -35,9 +35,9 @@ The current implementation (Version 1.0) intentionally utilizes standard library
 
 Phase 4 replaces the baseline's data structures one variable at a time, verifying correctness against the baseline after each change and benchmarking both wall-clock and (where available) hardware-counter evidence. Full detail is in [`public_docs/optimization_history.md`](public_docs/optimization_history.md) and the [Architecture Decision Log](public_docs/adr/README.md); the short version:
 
-*   **2.0 (done)**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator. Price levels unchanged (still `std::map`). Verified against the 1.0 baseline with differential testing (byte-identical trade ledgers across 250,000+ randomized actions) before any number was trusted.
-*   **Result**: a consistent **+33–35% throughput improvement** across all three synthetic workloads, and — measured with real Instruments CPU Counters, not just wall-clock — every hardware bottleneck category (Cycles, Instruction Delivery, Discarded, Instruction Processing) improved in every workload. The Worst-Case/Random-Prices throughput ratio barely moved (1.668 → 1.655), meaning allocation cost, while real and substantial, is **not** what explains that persistent gap.
-*   **Next (3.0)**: replace `std::map` with a flat, tick-indexed array for price levels — the step actually positioned to test the cache-miss hypothesis above directly.
+*   **2.0 (done)**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator. Price levels unchanged (still `std::map`). **+33–35% throughput** across all three workloads; every hardware bottleneck category improved (Instruments CPU Counters); the Worst-Case/Random-Prices throughput ratio barely moved (1.668 → 1.655) — allocation cost was real but wasn't what explained that persistent gap.
+*   **3.0 (done)**: replaced `std::map<Price, PriceLevel>` with a flat, tick-indexed array plus an occupancy bitmap. **+23.7% (Random) and +24.2% (Heavy Cancels)** on top of 2.0 — but a genuine **−10.3% regression on Worst Case**, confirmed at the hardware-counter level, not noise. The mechanism: the array's bitmap scan starts from the edge with no cached "best price," so its cost scales with how far the sole occupied price is from that edge — cheap when many levels are active, expensive when there's exactly one. The standing hypothesis finally moved regardless: the Worst-Case/Random-Prices ratio dropped from ~1.65 to **1.195**. Full mechanism, and the identified-but-not-yet-built fix, in [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md).
+*   **Next (4.0)**: reconsider the `OrderId → OrderLocation` cancellation index for cache-friendlier lookups — alongside caching 3.0's best-price tick to close the Worst Case regression above.
 
 ## Known Limitations & Non-Goals
 
@@ -75,6 +75,6 @@ make
 # Run performance benchmarks (1.0 baseline only — what the numbers above come from)
 ./engine_benchmark
 
-# Run the Phase 4 comparative study (1.0 vs 2.0, side by side)
+# Run the Phase 4 comparative study (1.0 vs 2.0 vs 3.0, side by side)
 ./variant_benchmark
 ```

@@ -35,3 +35,5 @@ Because six months from now nobody remembers *why* `std::list` won over a vector
 | [0017](0017-order-pool-fixed-capacity.md) | Fixed-capacity pool for 2.0's order storage | Accepted | 2026-08-06 |
 | [0018](0018-intrusive-list-order-storage.md) | 2.0 — intrusive linked list + pool allocator | Accepted | 2026-08-06 |
 | [0019](0019-instruments-signpost-correlation.md) | Correlating Instruments CPU Counters with `os_signpost` markers | Accepted | 2026-08-06 |
+| [0020](0020-bounded-price-range-flat-array.md) | Bounded, tick-indexed price range for 3.0 | Accepted | 2026-08-06 |
+| [0021](0021-flat-array-price-levels.md) | 3.0 — flat array price levels, and an honest regression | Accepted | 2026-08-06 |

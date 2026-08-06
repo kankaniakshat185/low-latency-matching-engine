@@ -55,7 +55,17 @@ This is exactly the mechanism ADR-0021 named: the bitmap-scan-from-edge was bran
 - Heavy Cancels: 17.7% → 31.4% (**+13.8pp**)
 - Worst Case: 10.0% → 15.4% (**+5.3pp**)
 
-Not investigated to a confirmed cause yet — a plausible but unverified explanation is that the flat vector's direct-index lookup and the `bestTick` read-modify-write both introduce short, sequential data dependencies where the previous hash-map lookup had more independent, speculatable work for the CPU to reorder around. Flagged as open rather than asserted, the same standard the rest of this ADR log tries to hold to.
+This looked worse than it is. Multiplying each workload's Processing percentage back out against its own total cycle count (also captured in the same trace) gives the *absolute* processing-bound cycle count, not just its share:
+
+| Workload | 3.0 processing cycles | 4.0 processing cycles | Absolute change |
+|---|---|---|---|
+| Random | 316.5M | 202.7M | **−35.9%** |
+| Heavy Cancels | 235.0M | 240.5M | +2.4% |
+| Worst Case | 130.7M | 124.1M | −5.0% |
+
+In every workload, the absolute processing-bound cost held flat or *dropped* — Random dropped by over a third. The percentage rose because the denominator (total cycles) collapsed even faster: Heavy Cancels' total cycle count fell 42.5% while its processing-bound cycles stayed essentially flat, so the same near-constant cost became a much larger share of a much smaller pie. This is an Amdahl's-law effect, not new cost — 4.0 didn't make memory-bound work more expensive, it made the branch-heavy work around it so much cheaper that what was already memory-bound stood out more in the percentage view.
+
+One candidate mechanism was tested directly and ruled out before landing on the above: an oversized flat cancellation-index array (`variant_benchmark` sizes `orderIdCapacity` to 3× a single workload's action count, since three workloads share one id counter — see `compare_variants.cpp`) blowing the working set out of cache, versus a hash map whose footprint tracks live orders rather than the full id range ever issued. A standalone benchmark ran the identical single workload through `OrderBookV4` twice — once with a tight, exactly-sized capacity, once with the oversized one `variant_benchmark` actually uses — five passes each. The delta was small and inconsistent (−3.4% to +7.5%, no consistent direction), meaning array size isn't the driver: ids are assigned sequentially, so access at any given moment clusters near the current high-water mark regardless of how large the array's declared capacity is. Worth recording as a ruled-out path, not just a footnote — it's the more obvious-sounding hypothesis, and it isn't the right one.
 
 *Useful fraction* rose for Random (+3.9pp) and Worst Case (+0.9pp) but dipped slightly for Heavy Cancels (−2.8pp) — worth stating plainly rather than smoothing over: a lower Useful *fraction* is not the same claim as fewer useful cycles in absolute terms. Heavy Cancels' total cycle count dropped 42.5% (3.0→4.0) alongside that percentage-point dip, so the absolute amount of non-useful work fell substantially even though its *share* of a much smaller total ticked up slightly.
 

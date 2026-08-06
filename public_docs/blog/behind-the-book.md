@@ -1,6 +1,6 @@
-# Behind the Book
+# The Regression I Kept
 
-*[DRAFT — complete end to end, ~4,700 words / ~23 min. Title's a placeholder — change it to whatever fits. Was originally scoped for a 30-40 min read; the extra material discussed for that (CI/tooling build-out, the ADR practice as its own section, deeper differential-testing internals, the macOS-version doc-hygiene anecdote) hasn't been added yet — flagged rather than padded in to hit a number.]*
+*[DRAFT — complete end to end, ~6,200 words / ~30 min.]*
 
 three versions into this project, i made one part of it ten percent slower. not on purpose, but once i understood why it happened, i kept the number and wrote up the explanation instead of quietly fixing it before anyone saw the regression. this is the story of everything that led up to that decision, starting from a much earlier and much dumber bug.
 
@@ -125,6 +125,26 @@ if (firstNonSpace != std::string::npos && token[firstNonSpace] == '-') {
 ```
 
 and then a fuzz test built specifically to make the first bug reproducible on demand: 20,000 randomized insert/cancel operations, roughly one in ten inserts deliberately reusing a live id, checking the book's invariants after every single one — every price level's tracked quantity matches its actual resting orders, no id shows up twice. that test is what should have caught this in the first place, and now it would, months before an audit thought to go looking.
+
+---
+
+## a pipeline that only checked one thing
+
+before the audit, ci here was one job: build in debug with address and undefined-behavior sanitizers on, run the tests, done. which sounds reasonable until you notice everything it doesn't cover. the benchmark binary — the thing every published number in this project comes from — had never been built by ci at all. the release configuration, `-O3`, the actual flags those numbers were measured under, had never been confirmed to even *compile* on a clean checkout. there was no static analysis, no formatting check, no coverage number. "the tests pass" and "the code is clean" were both things i was just asserting, not things anything was verifying.
+
+five jobs now, instead of one. the original debug-plus-sanitizers job stayed, but now it also builds and smoke-tests the benchmark binary — not trusting its numbers, just confirming it runs against a real csv file without crashing or throwing. a second job rebuilds everything in release mode and re-runs the full suite there too, since debug and `-O3` are different enough compilers-under-the-hood that "it works in debug" isn't the same claim as "it works in the configuration that produced the readme's numbers." a formatting check runs `clang-format` in dry-run mode and fails the build on any diff — deliberately the one blocking check among the new ones, since a formatting rule that doesn't actually block anything just trains people to ignore it. static analysis runs `clang-tidy`, but *not* blocking, on purpose: the tool had literally never run against this codebase before, and turning on a strict gate against a pile of findings nobody's triaged yet is how you teach a team to dismiss every red x without reading it. and a coverage job runs the suite under instrumentation and prints a real percentage into the build log instead of leaving "well-tested" as a vibe.
+
+that non-blocking decision on static analysis turned out to matter in a very literal way months later, when this got pushed to a real github runner for the first time. two things had been sitting as open questions the whole time this lived on one machine: whether `clang-tidy` would find anything once it actually ran, and whether the sanitizer job would even complete — my own mac's clang has a specific, unrelated quirk where address sanitizer hangs forever on any thrown exception, which meant i'd only ever verified correctness locally through the undefined-behavior sanitizer alone, never the full combination the actual ci job runs. both came back clean on the very first real push. small thing, but it's the kind of "i don't actually know yet" that's easy to quietly round up to "probably fine" instead of writing down and then just... checking, once the chance to check for real showed up.
+
+---
+
+## a paper trail for decisions, not just code
+
+somewhere around the point where i started ripping out data structures and comparing four implementations against each other, i started keeping a different kind of file: one dated, numbered document per decision, no matter how small. not "here's what the code does" — that's what the code is for — but "here's what else was on the table, and why it lost." twenty-plus of these exist now. a decision to use a fixed-capacity pool instead of a growable one has its own file. so does the decision to keep `clang-tidy` non-blocking. so does the choice to profile with apple's own tooling instead of reaching for a linux vm.
+
+the rule i set for myself was: never edit an old entry to reflect a later change of mind. if a later version does something differently, that's a new, separately-dated file, with one line added to the old one pointing forward. the point is that "what we believed at the time, and why" is worth keeping around exactly as it was believed, not silently smoothed over once it turns out to be incomplete.
+
+that rule got tested for real when i found a factual error, not a change of mind, sitting in one of these files: an environment string that said one macos version when the machine had actually been running a different one the whole time, for reasons that had nothing to do with any engineering decision — it was just wrong, copy-pasted from an earlier entry without checking. my first instinct was to leave the old entries alone out of respect for the "don't edit history" rule and only fix the one i'd personally just written. that's the wrong call, and it took someone else pointing it out for me to see it clearly: the "don't edit" rule exists to protect *decisions and the reasoning behind them*, not to protect a plain mistake nobody ever actually verified. i went back, checked this exact machine's own update history to get real evidence of what had actually been installed and when, and fixed every row that was wrong — not just the one i'd introduced. a rule that can't tell the difference between "we used to believe X, and later learned Y" and "someone typo'd a version number" isn't actually protecting anything worth protecting.
 
 ---
 
@@ -255,9 +275,32 @@ the number, and i checked it twice because it looked too good the first time: ev
 
 the hardware counters backed up the mechanism directly: the category tied to branch-misprediction cost, the one that got worse specifically on the same-price workload last time, dropped by more than half on that exact workload this time. that's the scan-from-the-edge cost actually leaving the hot path, visible on the chip, not just in the wall-clock number.
 
-it wasn't a clean sweep, though, and i want to say that as plainly as i said the regression two sections ago. a different bottleneck category — the one tied to the processor waiting on data it needs before it can keep going — went *up*, on every workload, most on the cancel-heavy one. i don't have a confirmed reason for that yet. my best guess is that the old hash-map lookup gave the cpu more independent, unrelated work it could speculate ahead on, and the new direct-index lookup replaced that with something shorter and more sequential — fewer wasted cycles, but also fewer places for the chip to hide latency while waiting. i wrote that down as a guess, not a finding, because it is one.
+it wasn't a clean sweep on the surface, and i want to say that as plainly as i said the regression two sections ago. a different bottleneck category — the one tied to the processor waiting on data it needs before it can keep going — went *up*, in percentage terms, on every workload, most on the cancel-heavy one. first instinct was to suspect the obvious-sounding culprit: the id-indexed array is sized to every id the benchmark could ever hand out across all three workloads combined, since they share one counter, which is a much bigger array than a hash map sized to however many orders are actually live at once. tested that directly — same workload, one run with a tight, exactly-sized array, one run with the oversized one the real benchmark uses — and the difference was nothing, no consistent direction at all across five passes. wrong guess, at least it was cheap to rule out.
+
+the real answer was sitting in data i already had. that percentage is a fraction of the total cycle count, and the total cycle count for this version had just collapsed everywhere. multiply the percentage back against its own workload's total cycles and the *absolute* cost in that category had gone down in every single case — down over a third for random prices. the fraction only went up because everything around it got so much cheaper that the one thing that didn't shrink took up more of a much smaller pie. not new cost. just the same fixed cost, standing out more once the rest of the work stopped hiding it.
 
 the ratio i'd been tracking since the earliest baseline — same-price throughput divided by random-price throughput, stuck at 1.7-ish for two versions, then 1.2-ish after the array — closed to **1.09**. four versions in, the two workloads that started nearly twice as far apart as they could be now sit within a tenth of each other.
+
+---
+
+## the test i wrote knowing it couldn't fail
+
+by the fourth version, the differential harness from a few sections back had been run so many times it stopped feeling like a safety net and started feeling like a formality — which is exactly the moment it's worth double-checking whether it's still earning its keep or just running out of habit.
+
+the honest answer is that it had picked up a real blind spot along the way. every one of those runs replays a randomly generated sequence of inserts and cancels, and random generation, left alone, tends toward the boring middle of its own distribution — plenty of variety in price and timing, but nothing that deliberately goes looking for the exact scenario where two implementations are most likely to disagree. so alongside the random workload, there's a second, deliberately adversarial one: every single order lands at the exact same price, on purpose, because that's precisely where an intrusive list and a flat array's internals diverge from each other the hardest. correctness matters most exactly where the implementations are least alike under the hood, and a purely random generator will happen upon that case eventually, maybe, if you're patient. the adversarial one puts it in front of the test on the first run, every time.
+
+worth showing the actual comparison, since "the ledgers matched" undersells what's being checked:
+
+```cpp
+bool tradesEqual(const Trade& a, const Trade& b) {
+    return a.makerOrderId == b.makerOrderId && a.takerOrderId == b.takerOrderId &&
+           a.price == b.price && a.quantity == b.quantity;
+}
+```
+
+every field of every trade, in order, across a run that can be hundreds of thousands of actions long. one mismatched quantity on trade number 40,000 fails the whole comparison, and the failure message points at exactly that trade, not just "something's different somewhere."
+
+by the time version four existed, i had seven of these tests — harness sanity-check, then two per version against the baseline, random and adversarial. all pairwise-consistent by construction: if version two matches the baseline and version three matches the baseline, they already agree with each other, transitively, without anyone needing to check. so i wrote an eighth test anyway, one shared workload run through all four at once, that doesn't prove anything the other seven didn't already prove. i wrote it because "provably implied by seven other tests" and "stated once, plainly, as a closing fact" aren't actually the same kind of useful — the second one is what you'd point at if someone asked "so do all four really agree?" instead of handing them seven test names and the transitivity argument.
 
 ---
 
@@ -281,6 +324,6 @@ the two moments that taught me the most weren't the wins.
 
 one was the audit — going back through code that already had a green test suite and asking it to prove itself again, harder, on purpose. the tests weren't lying. they just weren't asking the right questions yet. a reused order id and a negative number handed to `std::stoull` were both sitting there the whole time, both silent, both the kind of bug that never announces itself until something downstream is already wrong and nobody can say exactly when it started being wrong.
 
-the other was the ten percent. the sentence at the very top of this post — the one about making something slower on purpose, or at least keeping the number once it happened instead of hiding it — is describing that regression, and I'm glad I wrote it up the way I did instead of quietly patching it before publishing anything. because a version later, the exact same measurement that made version three look worse is what pointed straight at the fix, and the fix turned that same workload into the best result of the entire project. if I'd smoothed the number over the first time, i'd have gotten to the same fix eventually, probably. but i wouldn't have had the paper trail that made it obvious *why* it worked, and i wouldn't have trusted the fix nearly as much when it landed.
+the other was the ten percent. the sentence at the very top of this post — the one about making something slower on purpose, or at least keeping the number once it happened instead of hiding it — is describing that regression, and i'm glad i wrote it up the way i did instead of quietly patching it before publishing anything. because a version later, the exact same measurement that made version three look worse is what pointed straight at the fix, and the fix turned that same workload into the best result of the entire project. if i'd smoothed the number over the first time, i'd have gotten to the same fix eventually, probably. but i wouldn't have had the paper trail that made it obvious *why* it worked, and i wouldn't have trusted the fix nearly as much when it landed.
 
 four versions of this order book later, that's the pattern i keep landing back on: the measurement you don't like is usually the one worth writing down most carefully, because it's the one still pointing at something true.

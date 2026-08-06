@@ -1,27 +1,17 @@
 # Architecture Overview
 
-## Overview
-This document outlines the high-level architecture of the matching engine. The system is designed as a focused, single-machine C++20 engine that evaluates algorithmic efficiency and cache locality. 
+## The shape of it
+Three classes, one owning the next: `MatchingEngine` owns exactly one `OrderBook`, `OrderBook` manages two maps of `PriceLevel`s (bids and asks) and owns the matching algorithm itself (`OrderBook::matchAgainst` — it's not a passive container, it does the actual work), and `PriceLevel` holds the resting orders at one price, oldest first (currently `std::list`, though that's exactly the part Phase 4 below goes on to replace).
 
-## Design
-The repository strictly favors composition over inheritance. 
+Nothing in this hierarchy is virtual, and that's not a stylistic preference — it's what makes the rest of this document possible. Composition over inheritance means the internals (which container, which allocator, which memory layout) can be swapped and profiled independently of the matching logic sitting above them, without a vtable indirection in the way and without touching any call site that doesn't care which concrete book it's talking to.
 
-The core object hierarchy is strictly defined:
-*   `MatchingEngine` owns exactly one `OrderBook`.
-*   `OrderBook` manages two maps of `PriceLevel`s (Bids and Asks) **and owns the matching algorithm itself** (`OrderBook::matchAgainst`) — it is not just a passive container.
-*   `PriceLevel` encapsulates a priority queue (currently `std::list`) of `Order` structs.
+`MatchingEngine` itself stays deliberately thin: validate the order, delegate to `OrderBook::matchAgainst`, decide whether an unfilled remainder rests in the book. It has no access to `OrderBook`'s maps or `PriceLevel`'s order list at all — those are private to the classes that actually own them, on purpose, since giving the engine a way to reach in would have undone the whole point of separating them in the first place.
 
-This modularity isolates the matching logic from the internal data structures, allowing future replacement of standard library containers with custom allocators and contiguous memory layouts without breaking the core engine.
+## A few decisions worth calling out on their own
+The engine has zero runtime dependencies and compiles fast — no external library sits between it and the standard library. Benchmarking code (`BenchmarkConfig`, `WorkloadGenerator`) lives entirely outside the engine itself, so nothing benchmark-specific ever has a chance to leak into the actual matching path. And the boundaries where untrusted input enters — a duplicate `OrderId`, a malformed CSV row — get rejected loudly rather than silently coerced into something that merely looks valid; both are backed by tests, including a fuzz test that reuses ids on purpose across 20,000 operations and checks the book's invariants hold after every single one.
 
-`MatchingEngine` is deliberately thin now: validate the order, delegate to `OrderBook::matchAgainst`, decide whether to rest an unfilled remainder. It has no access to `OrderBook`'s maps or `PriceLevel`'s order list at all — those are private to the classes that own them.
-
-## Key Decisions
-*   **Zero External Dependencies:** The engine compiles instantly and has no runtime dependencies.
-*   **Separation of Concerns:** Benchmarking mechanics (`BenchmarkConfig`, `WorkloadGenerator`) are entirely isolated from the engine itself, preventing benchmark-specific code from polluting the critical path.
-*   **Validation at the boundaries:** `OrderBook` rejects a duplicate `OrderId` instead of overwriting its cancel index; `CSVParser` rejects malformed or negative input instead of coercing it. Both backed by tests, including a fuzz test that reuses ids on purpose across 20,000 operations and checks the book's invariants still hold.
-
-## Tradeoffs
-*   **Flexibility vs. Performance:** The current baseline utilizes `std::map` and `std::list`. While this provides a mathematically correct O(log P) lookup and O(1) cancel guarantee, it sacrifices cache locality. This tradeoff was intentionally made to establish a verified behavioral baseline before introducing cache-aware structures.
+## The tradeoff the baseline makes on purpose
+1.0 uses `std::map` and `std::list` throughout — a correct, easy-to-verify O(log P) lookup and O(1) cancel, at the cost of the cache locality either container sacrifices for that guarantee. That tradeoff isn't an oversight; it's the point of having a baseline at all. Establish something verifiably correct first, then go measure exactly what the "obviously slower" containers are actually costing — which is precisely what Phase 4 below does, instead of assuming the answer and rewriting on a hunch.
 
 ## Phase 4: the swap actually happening
 
@@ -30,5 +20,5 @@ This modularity isolates the matching logic from the internal data structures, a
 Not every swap is a clean win, and that's worth stating plainly here rather than only in the detailed history: 3.0 improved two of three benchmark workloads substantially but measurably *regressed* the third (Worst-Case-Same-Price), for an identifiable, mechanistic reason — see ADR-0021. 4.0 then closed that regression and then some (it's the largest relative gain of the three workloads on 4.0), but its own hardware-counter data shows the fix shifted cost into a different bottleneck category rather than eliminating cost outright — see ADR-0022. The architecture's job is to make swaps like this cheap to try and cheap to verify, not to guarantee every swap helps or that a fix is ever perfectly clean.
 
 ## Future Work
-*   Phase 4's comparative study (1.0 → 4.0) is functionally complete. What remains is a final cross-version summary and interview-prep write-up, plus root-causing 4.0's Instruction Processing Bottleneck increase (ADR-0022) — not a new numbered variant.
+*   Phase 4's comparative study (1.0 → 4.0) is complete: final cross-version summary, `interview_prep.md`, and 4.0's Instruction Processing Bottleneck increase are all resolved (ADR-0022 — it tracks the total cycle count shrinking faster than that category's absolute cost, not new cost). What's left is re-measuring 2.0/3.0/4.0 on an idle machine, not a new numbered variant.
 *   Full detail and results so far: [`public_docs/optimization_history.md`](optimization_history.md), [the Architecture Decision Log](adr/README.md).

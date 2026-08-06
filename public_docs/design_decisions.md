@@ -1,25 +1,25 @@
 # Key Design Decisions
 
 ## Overview
-This document logs the primary architectural and algorithmic decisions that govern the matching engine's implementation, detailing the rationale behind each choice.
+The short version of every decision that shaped this codebase — one entry per decision, decision and rationale side by side, so it's scannable without reading the reasoning behind ones you already agree with.
 
 *For the full, granular record — every decision, major or minor, as its own numbered and dated entry — see the [Architecture Decision Log](adr/README.md). This document is the short version.*
 
 ## 1. Establishing a Slow Baseline (Phase 1)
-**Decision**: The initial version of the engine intentionally utilizes standard library containers (`std::map`, `std::list`) known to possess poor cache locality.
-**Rationale**: In systems engineering, optimization without a baseline cannot be quantified. Correctness must be established first. By building a mathematically correct, highly testable baseline, we possess a strict behavioral regression suite against which all future hardware-specific optimizations (custom allocators, contiguous arrays) can be objectively measured.
+**Decision**: The initial version intentionally uses `std::map` and `std::list` — containers with known-poor cache locality.
+**Rationale**: There's no way to say "this got faster" without something to measure it against first. Building a correct, easy-to-verify baseline before touching performance means every later change (a custom allocator, a flat array) gets judged against a real number instead of a guess about what the old code "probably" cost.
 
 ## 2. Iterators for O(1) Cancellation
-**Decision**: The `OrderBook` utilizes a `std::unordered_map` mapping `OrderId` to `std::list::iterator`.
-**Rationale**: `std::list` provides strict iterator stability upon insertion and erasure. This allows us to cancel resting orders from the middle of a price level queue in O(1) time without traversing the book, while ensuring that surrounding orders are unaffected.
+**Decision**: `OrderBook` maps `OrderId` to a `std::list::iterator` in a hash map.
+**Rationale**: `std::list` is the one standard container that guarantees an iterator survives insertions and deletions happening anywhere else in the same list. That's what turns cancellation into a hash lookup plus an erase at a known position — no scanning the book, no risk to any other order's iterator.
 
 ## 3. Composition Over Inheritance
-**Decision**: The system utilizes strict composition (`MatchingEngine` owns `OrderBook`, which owns `PriceLevel`) rather than deep inheritance trees or interface abstractions.
-**Rationale**: Deep class hierarchies introduce vtable lookup overhead and indirect memory jumps (cache misses). Composition provides a flat, predictable memory model that remains modular enough to swap out internal data structures easily.
+**Decision**: `MatchingEngine` owns `OrderBook`, which owns `PriceLevel` — plain composition, no inheritance tree, nothing virtual anywhere in the hierarchy.
+**Rationale**: A virtual call is an indirect jump the branch predictor can't help with nearly as well as a direct one, and polymorphic orders would need to live behind pointers instead of sitting by value in a container. Composition keeps the memory layout flat and predictable while still leaving the internals free to swap — which is exactly what made Phase 4's four-implementation comparison possible without redesigning anything.
 
 ## 4. Infrastructure & Testing
-**Decision**: The repository strictly limits infrastructure to what is essential for verifying correctness and performance. We use **GoogleTest** as our permanent correctness contract for unit and integration testing. Debug builds enable **AddressSanitizer (ASan)** and **UndefinedBehaviorSanitizer (UBSan)** to strictly guarantee memory safety, while Release builds remain optimized (`-O3`) and free of overhead.
-**Rationale**: Systems programming requires rigorous memory validation. However, deploying complex infrastructure (Docker, Kubernetes, cloud CI) adds no engineering value to a localized, focused performance project. A single GitHub Actions workflow ensures the standard is upheld on every commit.
+**Decision**: GoogleTest for the whole test suite, ASan+UBSan in every Debug build, `-O3` and no sanitizer overhead in Release, one GitHub Actions workflow — nothing beyond what's needed to actually verify correctness and performance.
+**Rationale**: This is a single-machine matching engine, not a deployed service — Docker, Kubernetes, or a multi-environment CI matrix would be infrastructure with no code behind it to justify them. GoogleTest's fixtures and real assertion diagnostics earn their compile-time cost the moment tests start covering adversarial input instead of just happy-path matching; the sanitizers exist because manual memory management (the pool allocator, the intrusive list) is exactly the kind of code that hides a use-after-free until it's someone else's problem.
 
 ## 5. Validation at Every External Boundary
 **Decision**: `OrderBook` rejects a duplicate `OrderId` instead of silently overwriting its cancel index. `CSVParser` rejects negative numbers, out-of-range values, malformed rows, and bad Action/Side characters instead of coercing them into something structurally valid but wrong.
@@ -62,8 +62,8 @@ This document logs the primary architectural and algorithmic decisions that gove
 **Rationale**: Both changes are instances of the same underlying idea — a real, bounded domain (order-id sequence range, same as 3.0's price range) can be indexed directly instead of handled through a general-purpose structure — not two different subsystems being isolated the way 2.0 vs. 3.0 were. Splitting them wouldn't have isolated a second variable so much as split one idea across two ADRs.
 
 ## 15. Report the Hardware Trade-Off, Not Just the Win
-**Decision**: 4.0's ADR (0022) reports that Discarded Bottleneck dropped sharply (confirming the fix) *and* that Instruction Processing Bottleneck rose across every workload (an unexplained cost), rather than leading only with the ~2x wall-clock throughput number.
-**Rationale**: Same principle as entry 13, applied to a win instead of a regression — a good headline number is exactly when it's easiest to stop looking. The wall-clock result is real and large, but "every hardware category improved" would have been a false claim; "the mechanism we targeted improved a lot, and cost moved somewhere else we don't yet have a confirmed explanation for" is the true one, and it's the one written down.
+**Decision**: 4.0's ADR (0022) reports that Discarded Bottleneck dropped sharply (confirming the fix) *and* that Instruction Processing Bottleneck rose across every workload's *percentage*, rather than leading only with the ~2x wall-clock throughput number.
+**Rationale**: Same principle as entry 13, applied to a win instead of a regression — a good headline number is exactly when it's easiest to stop looking. The wall-clock result is real and large, but "every hardware category improved" would have been a false claim in either direction: reporting only the percentage rise without checking the absolute cost behind it would have been just as misleading as not mentioning it at all. Multiplying the percentage back against each workload's own total cycle count (data already on hand, no new profiling needed) showed the absolute processing-bound cost held flat or dropped in every case — the rise was the denominator shrinking, not the numerator growing. Worth the extra step rather than either overclaiming a clean win or underclaiming an unexplained cost.
 
 ## 16. Test the Structures Directly, Not Just Through the Engine
 **Decision**: `tests/structures_test.cpp` instantiates `OrderPool`/`OrderBookV2`/`OrderBookV3`/`OrderBookV4` directly rather than only exercising them through `MatchingEngineT<BookT>` and the differential test suite.

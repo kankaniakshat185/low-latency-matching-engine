@@ -1,27 +1,18 @@
 # Matching Engine Implementation
 
-## Overview
-This document details the core matching algorithm implementation.
+## How matching actually works here
+Every incoming order gets processed synchronously, one at a time, in the order it arrives — no threading, no actor model, nothing concurrent to reason about. That's a deliberate simplicity, not a missing feature: it's what lets the test suite double as a real deterministic regression suite instead of something that only *usually* reproduces.
 
-## Design
-The engine processes each incoming order sequentially to guarantee strict determinism. 
+An incoming order sweeps the opposite side of the book (buys against asks, sells against bids), starting from the best price, until it's either fully filled or the opposing side runs out of liquidity. Price-time priority is enforced strictly: better prices trade first, and at the same price, whoever got there first trades first. A partial fill decrements a resting order's quantity in place — its position in the book (its iterator, in 1.0's case) never changes just because it got smaller.
 
-*   **Priority Rule:** The engine enforces strict Price-Time priority (FIFO).
-*   **Matching:** Incoming orders are evaluated against the resting OrderBook (bids against asks, asks against bids). The engine sweeps the book until the incoming order is either fully filled or the available opposing liquidity is exhausted.
-*   **Partial Fills:** Resting orders decrement their quantity but maintain their iterator position.
-*   **One matching path, not four:** Limit-buy, limit-sell, market-buy, and market-sell used to be four separate, near-identical functions. Now it's one `OrderBook::matchAgainst`, parameterized on side and an optional limit price — no limit price at all means a market order.
+This used to be four separate, near-identical functions — limit-buy, limit-sell, market-buy, market-sell — before collapsing into one `OrderBook::matchAgainst`, parameterized on side and an optional limit price. No limit price at all just means a market order; there was never a real reason for the market-order path to be a different function once the limit-price check became optional instead of mandatory.
 
-## Key Decisions
-*   **Synchronous Execution:** The engine evaluates matches synchronously. There is no threading or actor model complexity introduced here, ensuring that behavioral tests serve as a deterministic regression suite.
-*   **Iterator Preservation:** Order cancellation leverages `std::list::iterator` mapped by `OrderId`. The engine guarantees that these iterators are never invalidated during partial fills.
-*   **Reject before matching, not during:** a zero-quantity order or an `OrderId` that's already resting gets rejected before any matching starts. Doing it up front, not just at insert time, also catches an order that would cross and trade against a resting order sharing its own id.
+Two more things worth stating plainly: cancellation is O(1) by construction, not by accident — the hash map from `OrderId` to iterator, plus `std::list`'s guarantee that an iterator survives insertions/deletions happening anywhere else in the same list, means a cancel never has to scan anything. And validation happens *before* matching starts, not partway through — a zero-quantity order or an `OrderId` that's already resting gets rejected up front, which incidentally also catches the case where an incoming order would cross and trade against a resting order that happens to share its own id.
 
-## Performance
-The current algorithmic complexity for matching is O(K), where K represents the number of passive resting orders that must be traversed and filled by the incoming aggressive order.
+## Complexity and what's deliberately out of scope
+Matching itself is O(K), where K is however many resting orders the incoming one actually fills — not the size of the book, just the part of it that gets touched.
 
-## Limitations
-*   Market orders currently sweep the book and discard any unfilled remainder. Future iterations may require more nuanced order types, but they are excluded here to maintain strict focus on the algorithmic core.
-*   No self-trade prevention, no multi-symbol support, no order timestamps — see the README's Known Limitations section for the complete, current list of explicit non-goals.
+Market orders sweep and discard whatever doesn't fill; there's no support for more nuanced order types (stop orders, iceberg orders, and so on), and that's scope, not an oversight — see the README's Known Limitations section for the full, current list of what's deliberately not here yet (no self-trade prevention, no multi-symbol support, no timestamps).
 
 ## Correctness across implementations (Phase 4)
 

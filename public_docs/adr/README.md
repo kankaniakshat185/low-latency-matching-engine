@@ -37,3 +37,4 @@ Because six months from now nobody remembers *why* `std::list` won over a vector
 | [0019](0019-instruments-signpost-correlation.md) | Correlating Instruments CPU Counters with `os_signpost` markers | Accepted | 2026-08-06 |
 | [0020](0020-bounded-price-range-flat-array.md) | Bounded, tick-indexed price range for 3.0 | Accepted | 2026-08-06 |
 | [0021](0021-flat-array-price-levels.md) | 3.0 — flat array price levels, and an honest regression | Accepted | 2026-08-06 |
+| [0022](0022-cached-best-tick-and-flat-cancellation-index.md) | 4.0 — cached best-price tick and a flat OrderId-indexed cancellation index | Accepted | 2026-08-06 |

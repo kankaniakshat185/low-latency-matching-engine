@@ -11,6 +11,15 @@
 
 namespace engine {
 
+// This is "1.0" / "the baseline" in the Phase 4 comparative study —
+// std::map + std::list + std::unordered_map, unchanged since Phase 1.
+// Deliberately never renamed to OrderBookV1 when OrderBookV2/V3 were added
+// (src/structures/): renaming would have touched every existing test, doc,
+// and ADR reference to "OrderBook" for a purely cosmetic reason. The
+// version mapping lives in one place instead: MatchingEngine.h's
+// `using MatchingEngine = MatchingEngineT<OrderBook>;`.
+// See public_docs/optimization_history.md and the ADR log for the other
+// variants and the measured comparison between all of them.
 struct OrderLocation {
     Side side;
     Price price;

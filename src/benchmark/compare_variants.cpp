@@ -1,6 +1,7 @@
-// Phase 4 comparative study: runs the same synthetic workloads through
-// multiple OrderBook variants (1.0 baseline, 2.0 pool + intrusive list, ...)
-// and prints results side by side. Deliberately a separate binary from
+// Phase 4 comparative study: runs the same synthetic workloads through all
+// four OrderBook variants (1.0 baseline, 2.0 pool + intrusive list, 3.0 flat
+// array, 4.0 cached best-tick + flat cancellation index) and prints results
+// side by side. Deliberately a separate binary from
 // engine_benchmark — engine_benchmark's existing output and behavior are
 // what the README's published 1.0/1.0.1 numbers come from, and this
 // comparison shouldn't risk changing that in any way.
@@ -9,6 +10,7 @@
 #include "engine/MatchingEngine.h"
 #include "structures/OrderBookV2.h"
 #include "structures/OrderBookV3.h"
+#include "structures/OrderBookV4.h"
 #include "utils/Timer.h"
 #include <iomanip>
 #include <iostream>
@@ -17,10 +19,11 @@
 
 // os_signpost marks each variant/workload run as a named interval so
 // Instruments (CPU Counters, via `xctrace`) can attribute hardware-counter
-// data to the correct run — otherwise all six runs (1.0 x3, 2.0 x3) blur
-// together in one trace with no way to tell which bottleneck data belongs
-// to which variant. Apple-only; compiles out entirely elsewhere (e.g. the
-// Linux CI runner) so this never affects portability.
+// data to the correct run — otherwise all twelve runs (four variants x
+// three workloads) blur together in one trace with no way to tell which
+// bottleneck data belongs to which variant. Apple-only; compiles out
+// entirely elsewhere (e.g. the Linux CI runner) so this never affects
+// portability.
 #if defined(__APPLE__)
 #include <os/log.h>
 #include <os/signpost.h>
@@ -184,6 +187,12 @@ int main() {
     constexpr Price kV3MinPrice = 9000;
     constexpr Price kV3MaxPrice = 11000;
     constexpr Price kV3TickSize = 1;
+    // OrderBookV4's bounded OrderId range: WorkloadGenerator hands out ids
+    // from one counter shared across all three generate*() calls below, not
+    // reset per workload — so by the time generateWorstCase() runs, ids are
+    // already past 2 * totalActions. 3 * totalActions + 1 safely covers ids
+    // handed out across all three workload generations combined.
+    size_t orderIdCapacity = 3 * totalActions + 1;
 
     BenchmarkConfig randomConfig{"Random Prices", measuredActions, warmupActions};
     BenchmarkConfig cancelsConfig{"Heavy Cancels", measuredActions, warmupActions};
@@ -196,6 +205,7 @@ int main() {
 
     using EngineV2 = MatchingEngineT<structures::OrderBookV2>;
     using EngineV3 = MatchingEngineT<structures::OrderBookV3>;
+    using EngineV4 = MatchingEngineT<structures::OrderBookV4>;
 
     std::vector<std::pair<std::string, BenchmarkResult>> randomResults;
     {
@@ -210,6 +220,11 @@ int main() {
         BENCHMARK_SIGNPOST("3.0-Random");
         randomResults.emplace_back("3.0", runBenchmark<EngineV3>(randomConfig, randomWorkload, kV3MinPrice, kV3MaxPrice,
                                                                  kV3TickSize, poolCapacity));
+    }
+    {
+        BENCHMARK_SIGNPOST("4.0-Random");
+        randomResults.emplace_back("4.0", runBenchmark<EngineV4>(randomConfig, randomWorkload, kV3MinPrice, kV3MaxPrice,
+                                                                 kV3TickSize, poolCapacity, orderIdCapacity));
     }
     printComparison(randomResults);
 
@@ -227,6 +242,11 @@ int main() {
         cancelsResults.emplace_back("3.0", runBenchmark<EngineV3>(cancelsConfig, cancelsWorkload, kV3MinPrice,
                                                                   kV3MaxPrice, kV3TickSize, poolCapacity));
     }
+    {
+        BENCHMARK_SIGNPOST("4.0-HeavyCancels");
+        cancelsResults.emplace_back("4.0", runBenchmark<EngineV4>(cancelsConfig, cancelsWorkload, kV3MinPrice,
+                                                                  kV3MaxPrice, kV3TickSize, poolCapacity, orderIdCapacity));
+    }
     printComparison(cancelsResults);
 
     std::vector<std::pair<std::string, BenchmarkResult>> worstResults;
@@ -242,6 +262,11 @@ int main() {
         BENCHMARK_SIGNPOST("3.0-WorstCase");
         worstResults.emplace_back("3.0", runBenchmark<EngineV3>(worstCaseConfig, worstCaseWorkload, kV3MinPrice,
                                                                 kV3MaxPrice, kV3TickSize, poolCapacity));
+    }
+    {
+        BENCHMARK_SIGNPOST("4.0-WorstCase");
+        worstResults.emplace_back("4.0", runBenchmark<EngineV4>(worstCaseConfig, worstCaseWorkload, kV3MinPrice,
+                                                                kV3MaxPrice, kV3TickSize, poolCapacity, orderIdCapacity));
     }
     printComparison(worstResults);
 

@@ -31,13 +31,14 @@ The current implementation (Version 1.0) intentionally utilizes standard library
 
 *(Observation: The Worst-Case scenario bypasses O(log P) heap traversal, indicating that `std::map` lookup overhead is likely the primary bottleneck).*
 
-## Phase 4: The Comparative Study (in progress)
+## Phase 4: The Comparative Study (done)
 
 Phase 4 replaces the baseline's data structures one variable at a time, verifying correctness against the baseline after each change and benchmarking both wall-clock and (where available) hardware-counter evidence. Full detail is in [`public_docs/optimization_history.md`](public_docs/optimization_history.md) and the [Architecture Decision Log](public_docs/adr/README.md); the short version:
 
 *   **2.0 (done)**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator. Price levels unchanged (still `std::map`). **+33–35% throughput** across all three workloads; every hardware bottleneck category improved (Instruments CPU Counters); the Worst-Case/Random-Prices throughput ratio barely moved (1.668 → 1.655) — allocation cost was real but wasn't what explained that persistent gap.
 *   **3.0 (done)**: replaced `std::map<Price, PriceLevel>` with a flat, tick-indexed array plus an occupancy bitmap. **+23.7% (Random) and +24.2% (Heavy Cancels)** on top of 2.0 — but a genuine **−10.3% regression on Worst Case**, confirmed at the hardware-counter level, not noise. The mechanism: the array's bitmap scan starts from the edge with no cached "best price," so its cost scales with how far the sole occupied price is from that edge — cheap when many levels are active, expensive when there's exactly one. The standing hypothesis finally moved regardless: the Worst-Case/Random-Prices ratio dropped from ~1.65 to **1.195**. Full mechanism, and the identified-but-not-yet-built fix, in [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md).
-*   **Next (4.0)**: reconsider the `OrderId → OrderLocation` cancellation index for cache-friendlier lookups — alongside caching 3.0's best-price tick to close the Worst Case regression above.
+*   **4.0 (done)**: cached the best-price tick per side (closes 3.0's regression) and replaced the `OrderId → OrderLocation` cancellation index — a `std::unordered_map` since 1.0 — with a flat vector indexed directly by id. **+122.3% (Random), +97.1% (Heavy Cancels), +100.6% (Worst Case)** on top of 3.0 — every workload roughly doubled, including the one that regressed in 3.0, which is now the single largest relative gain of the three. The Worst-Case/Random-Prices ratio closes further still, to **1.086**. Instruments shows the fix is real but not free: Discarded Bottleneck (branch-misprediction cost) drops sharply everywhere, but Instruction Processing Bottleneck rises everywhere too — an open question, not yet root-caused. Full breakdown in [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
+*   **Next**: Phase 4's comparative study (1.0 → 4.0) is functionally complete. What's left is closing the loop — a final cross-version summary and interview-prep write-up — not a new numbered version.
 
 ## Known Limitations & Non-Goals
 
@@ -75,6 +76,6 @@ make
 # Run performance benchmarks (1.0 baseline only — what the numbers above come from)
 ./engine_benchmark
 
-# Run the Phase 4 comparative study (1.0 vs 2.0 vs 3.0, side by side)
+# Run the Phase 4 comparative study (1.0 vs 2.0 vs 3.0 vs 4.0, side by side)
 ./variant_benchmark
 ```

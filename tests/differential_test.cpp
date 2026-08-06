@@ -1,16 +1,14 @@
 // Phase 4 scaffolding: this harness runs the same action sequence through
-// two (eventually four) MatchingEngine implementations and asserts they
+// four independent MatchingEngine implementations (1.0's OrderBook, 2.0's
+// OrderBookV2, 3.0's OrderBookV3, 4.0's OrderBookV4) and asserts they
 // produce byte-identical trade ledgers. Correctness across implementations
 // is what makes the Phase 4 comparative study trustworthy — a faster
 // OrderBook that quietly behaves differently is worthless, and this is the
 // test that would catch it, at the exact action that caused it.
 //
-// Today there is only one implementation (OrderBook, i.e. 1.0), so the only
-// test below is a self-consistency check on the harness machinery itself
-// (determinism, ledger comparison) rather than a real cross-implementation
-// comparison. The moment OrderBookV2 (2.0) exists, add a second TEST here
-// comparing runLedger<OrderBook> against runLedger<OrderBookV2> — that is
-// the actual point of this file.
+// HarnessIsDeterministic below is a sanity check on the harness machinery
+// itself (determinism, ledger comparison); every VxMatchesBaseline* test
+// after it is a real cross-implementation comparison against 1.0.
 
 #include <gtest/gtest.h>
 #include "engine/MatchingEngine.h"
@@ -18,6 +16,7 @@
 #include "engine/Trade.h"
 #include "structures/OrderBookV2.h"
 #include "structures/OrderBookV3.h"
+#include "structures/OrderBookV4.h"
 #include <cstdint>
 #include <random>
 #include <utility>
@@ -202,5 +201,42 @@ TEST(DifferentialTest, V3MatchesBaselineOnWorstCaseSamePrice) {
     EXPECT_GT(expected.size(), 0u);
 }
 
-// TODO(Phase 4, Step 4): once OrderBookV4 exists, add the same two tests
-// again against it, following this exact pattern.
+// OrderBookV4 additionally needs an orderIdCapacity — both workload
+// generators above hand out ids sequentially starting at 1, so
+// kActionCount + 1 is a tight, safe upper bound (see the class comment on
+// the flat OrderId-indexed cancellation index).
+TEST(DifferentialTest, V4MatchesBaseline) {
+    constexpr size_t kActionCount = 200'000;
+    auto actions = generateRandomActions(/*seed=*/1234, kActionCount);
+
+    auto expected = runLedger<OrderBook>(actions);
+    auto actual = runLedger<structures::OrderBookV4>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount,
+                                                      kActionCount + 1);
+
+    assertLedgersMatch(expected, actual);
+    EXPECT_GT(expected.size(), 0u);
+}
+
+TEST(DifferentialTest, V4MatchesBaselineOnWorstCaseSamePrice) {
+    // This is the exact workload 4.0's cached best-tick exists for: every
+    // order at the same price, so the best-price tick never moves once the
+    // first order lands. If the cache logic has an off-by-one anywhere,
+    // this is where it would produce a wrong trade, not just a slow one.
+    constexpr size_t kActionCount = 50'000;
+    std::vector<Action> actions;
+    actions.reserve(kActionCount);
+    std::mt19937_64 rng(5678);
+    std::uniform_int_distribution<Quantity> qtyDist(1, 1000);
+    for (size_t i = 0; i < kActionCount; ++i) {
+        Side side = (i % 2 == 0) ? Side::Buy : Side::Sell;
+        actions.push_back(
+            {Action::Kind::Insert, Order(static_cast<OrderId>(i + 1), 10000, qtyDist(rng), side, OrderType::Limit)});
+    }
+
+    auto expected = runLedger<OrderBook>(actions);
+    auto actual = runLedger<structures::OrderBookV4>(actions, kV3MinPrice, kV3MaxPrice, kV3TickSize, kActionCount,
+                                                      kActionCount + 1);
+
+    assertLedgersMatch(expected, actual);
+    EXPECT_GT(expected.size(), 0u);
+}

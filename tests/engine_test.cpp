@@ -253,6 +253,42 @@ TEST(MatchingEngineFuzz, RandomOpsWithIdReusePreserveBookInvariants) {
     }
 }
 
+// A price level with no resting orders left should be erased from the
+// book's map, not just left sitting there empty. Nothing in the public
+// API behaves differently either way (an empty PriceLevel is silently
+// harmless to correctness), which is exactly why this needs its own
+// direct check — a leak here would never show up as a wrong trade, only
+// as the map growing without bound over a long-running session.
+TEST_F(MatchingEngineTest, PriceLevelRemovedFromBookAfterFullCancel) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    ASSERT_EQ(engine.getOrderBook().getAsks().count(100), 1u);
+
+    EXPECT_TRUE(engine.cancelOrder(1));
+    EXPECT_EQ(engine.getOrderBook().getAsks().count(100), 0u);
+}
+
+TEST_F(MatchingEngineTest, PriceLevelRemovedFromBookAfterFullMatch) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    ASSERT_EQ(engine.getOrderBook().getAsks().count(100), 1u);
+
+    auto trades = engine.processOrder(Order(2, 100, 10, Side::Buy, OrderType::Limit));
+    ASSERT_EQ(trades.size(), 1u);
+    EXPECT_EQ(engine.getOrderBook().getAsks().count(100), 0u);
+}
+
+// Cancelling or querying an id that was never inserted at all — not one
+// that used to be resting and got filled/cancelled — on an otherwise
+// non-empty book. Distinct from CancellationFailure above (that one runs
+// on a completely empty book); this checks the lookup itself, not just
+// the empty-book path.
+TEST_F(MatchingEngineTest, HasOrderAndCancelReturnFalseForIdThatWasNeverInserted) {
+    engine.processOrder(Order(1, 100, 10, Side::Sell, OrderType::Limit));
+    EXPECT_FALSE(engine.getOrderBook().hasOrder(999));
+    EXPECT_FALSE(engine.cancelOrder(999));
+    // The real order must be completely unaffected by the failed lookup.
+    EXPECT_TRUE(engine.getOrderBook().hasOrder(1));
+}
+
 TEST_F(MatchingEngineTest, MarketOrderDiscardRemainder) {
     engine.processOrder(Order(1, 100, 5, Side::Sell, OrderType::Limit));
 

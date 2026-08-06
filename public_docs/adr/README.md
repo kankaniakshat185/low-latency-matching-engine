@@ -39,3 +39,4 @@ Because six months from now nobody remembers *why* `std::list` won over a vector
 | [0021](0021-flat-array-price-levels.md) | 3.0 — flat array price levels, and an honest regression | Accepted | 2026-08-06 |
 | [0022](0022-cached-best-tick-and-flat-cancellation-index.md) | 4.0 — cached best-price tick and a flat OrderId-indexed cancellation index | Accepted | 2026-08-06 |
 | [0023](0023-structure-tests-and-variant-benchmark-ci.md) | Direct unit tests for Phase 4 structures, and CI coverage for `variant_benchmark` | Accepted | 2026-08-06 |
+| [0024](0024-first-real-clang-tidy-run.md) | clang-tidy's first real local run — expanded checks, fixed include hygiene | Accepted | 2026-08-06 |

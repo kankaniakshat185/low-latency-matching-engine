@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/Order.h"
+#include "engine/Types.h"
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>

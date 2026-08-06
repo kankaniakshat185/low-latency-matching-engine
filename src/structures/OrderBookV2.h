@@ -6,6 +6,9 @@
 #include "structures/OrderPool.h"
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <unordered_map>

@@ -8,16 +8,19 @@
 
 #include "benchmark/WorkloadGenerator.h"
 #include "engine/MatchingEngine.h"
+#include "engine/Types.h"
 #include "structures/OrderBookV2.h"
 #include "structures/OrderBookV3.h"
 #include "structures/OrderBookV4.h"
 #include "utils/Timer.h"
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 // os_signpost marks each variant/workload run as a named interval so
 // Instruments (CPU Counters, via `xctrace`) can attribute hardware-counter

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "engine/Order.h"
+#include "engine/Types.h"
 #include <cassert>
+#include <iterator>
 #include <list>
 
 namespace engine {

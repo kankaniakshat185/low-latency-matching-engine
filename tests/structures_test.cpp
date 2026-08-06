@@ -77,6 +77,29 @@ TEST(OrderBookDirectTest, DuplicateOrderIdRejected) {
 // OrderBookV2 (2.0): same duplicate-id policy, pool-backed storage.
 // ---------------------------------------------------------------------
 
+TEST(OrderBookV2Test, EmptyBookCancelAndHasOrderReturnFalse) {
+    OrderBookV2 book(/*orderPoolCapacity=*/10);
+    EXPECT_FALSE(book.hasOrder(1));
+    EXPECT_FALSE(book.cancelOrder(1));
+}
+
+TEST(OrderBookV2Test, HasOrderAndCancelReturnFalseForIdThatWasNeverInserted) {
+    OrderBookV2 book(/*orderPoolCapacity=*/10);
+    EXPECT_TRUE(book.addOrder(makeOrder(1, 100)));
+    EXPECT_FALSE(book.hasOrder(999));
+    EXPECT_FALSE(book.cancelOrder(999));
+    EXPECT_TRUE(book.hasOrder(1)); // untouched by the failed lookup
+}
+
+TEST(OrderBookV2Test, MatchAgainstEmptyBookProducesNoTrades) {
+    OrderBookV2 book(/*orderPoolCapacity=*/10);
+    Order incoming = makeOrder(1, 100, 10, Side::Buy);
+    std::vector<Trade> trades;
+    book.matchAgainst(incoming, std::nullopt, trades);
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(incoming.quantity, 10u); // nothing consumed
+}
+
 TEST(OrderBookV2Test, DuplicateOrderIdRejected) {
     OrderBookV2 book(/*orderPoolCapacity=*/10);
     EXPECT_TRUE(book.addOrder(makeOrder(1, 100)));
@@ -89,6 +112,29 @@ TEST(OrderBookV2Test, DuplicateOrderIdRejected) {
 // per-order validation both need to reject out-of-range input loudly
 // rather than corrupting the flat array.
 // ---------------------------------------------------------------------
+
+TEST(OrderBookV3Test, EmptyBookCancelAndHasOrderReturnFalse) {
+    OrderBookV3 book(100, 200, 1, 10);
+    EXPECT_FALSE(book.hasOrder(1));
+    EXPECT_FALSE(book.cancelOrder(1));
+}
+
+TEST(OrderBookV3Test, HasOrderAndCancelReturnFalseForIdThatWasNeverInserted) {
+    OrderBookV3 book(100, 200, 1, 10);
+    EXPECT_TRUE(book.addOrder(makeOrder(1, 150)));
+    EXPECT_FALSE(book.hasOrder(999));
+    EXPECT_FALSE(book.cancelOrder(999));
+    EXPECT_TRUE(book.hasOrder(1));
+}
+
+TEST(OrderBookV3Test, MatchAgainstEmptyBookProducesNoTrades) {
+    OrderBookV3 book(100, 200, 1, 10);
+    Order incoming = makeOrder(1, 150, 10, Side::Buy);
+    std::vector<Trade> trades;
+    book.matchAgainst(incoming, std::nullopt, trades);
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(incoming.quantity, 10u);
+}
 
 TEST(OrderBookV3Test, ConstructorRejectsInvertedRange) {
     EXPECT_THROW(OrderBookV3(200, 100, 1, 10), std::invalid_argument);
@@ -168,6 +214,31 @@ TEST(OrderBookV3Test, MarketSweepCanFullyDrainBidSideDownToThePriceFloor) {
 // OrderBookV4 (4.0): same bounded price range as 3.0, plus a bounded
 // OrderId range for the flat cancellation index (ADR-0022).
 // ---------------------------------------------------------------------
+
+TEST(OrderBookV4Test, EmptyBookCancelAndHasOrderReturnFalse) {
+    OrderBookV4 book(100, 200, 1, 10, 10);
+    EXPECT_FALSE(book.hasOrder(1));
+    EXPECT_FALSE(book.cancelOrder(1));
+}
+
+// Distinct from HasOrderReturnsFalseRatherThanThrowingForOutOfRangeId below:
+// this id is well within orderIdCapacity, it just was never inserted.
+TEST(OrderBookV4Test, HasOrderAndCancelReturnFalseForInRangeIdThatWasNeverInserted) {
+    OrderBookV4 book(100, 200, 1, 10, /*orderIdCapacity=*/10);
+    EXPECT_TRUE(book.addOrder(makeOrder(1, 150)));
+    EXPECT_FALSE(book.hasOrder(7));
+    EXPECT_FALSE(book.cancelOrder(7));
+    EXPECT_TRUE(book.hasOrder(1));
+}
+
+TEST(OrderBookV4Test, MatchAgainstEmptyBookProducesNoTrades) {
+    OrderBookV4 book(100, 200, 1, 10, 10);
+    Order incoming = makeOrder(1, 150, 10, Side::Buy);
+    std::vector<Trade> trades;
+    book.matchAgainst(incoming, std::nullopt, trades);
+    EXPECT_TRUE(trades.empty());
+    EXPECT_EQ(incoming.quantity, 10u);
+}
 
 TEST(OrderBookV4Test, ConstructorRejectsInvertedRange) {
     EXPECT_THROW(OrderBookV4(200, 100, 1, 10, 10), std::invalid_argument);

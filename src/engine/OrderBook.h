@@ -1,9 +1,13 @@
 #pragma once
 
+#include "engine/Order.h"
 #include "engine/PriceLevel.h"
 #include "engine/Trade.h"
+#include "engine/Types.h"
 #include <algorithm>
 #include <cassert>
+#include <functional>
+#include <list>
 #include <map>
 #include <optional>
 #include <unordered_map>

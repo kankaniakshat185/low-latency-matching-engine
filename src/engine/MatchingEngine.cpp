@@ -1,4 +1,5 @@
 #include "engine/MatchingEngine.h"
+#include "engine/OrderBook.h"
 
 namespace engine {
 

@@ -2,6 +2,8 @@
 
 #include "engine/Types.h"
 #include "engine/Order.h"
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 #include <random>
 

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "engine/OrderBook.h"
+#include "engine/Order.h"
 #include "engine/Trade.h"
+#include "engine/Types.h"
 #include <cassert>
 #include <optional>
 #include <stdexcept>

@@ -2,9 +2,14 @@
 #include "replay/CSVParser.h"
 #include "engine/MatchingEngine.h"
 #include "utils/Timer.h"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
 #include <iostream>
 #include <iomanip>
 #include <string>
+#include <vector>
 
 using namespace engine;
 using namespace engine::benchmark;

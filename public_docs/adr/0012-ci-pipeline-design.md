@@ -39,6 +39,10 @@ Two things flagged rather than assumed clean: the static-analysis job's first re
 
 `build_and_test` and `release_build` now also build and smoke-test `variant_benchmark` (all four Phase 4 `OrderBook` variants), the same treatment `engine_benchmark` got when this ADR was first written — it had shipped with zero CI coverage in any configuration until this point. Full reasoning and the CLI change that made a fast smoke test possible (an action-count override, rather than running the full 1.1M-action study on a shared runner) is in ADR-0023.
 
+## Update (2026-08-06): clang-tidy finally ran locally too, not just in CI
+
+An LLVM install (`brew install llvm`) made a local, dry-runnable `clang-tidy` possible for the first time — see ADR-0024 for the full results: expanded checks, real findings, all include-hygiene issues fixed, no dead/unused code anywhere, and a triaged (not ignored) list of the remaining style findings this ADR's non-blocking decision was written to make room for.
+
 ## Update (2026-08-06): both flagged unknowns above resolved on the first real push
 
 Both caveats in the Consequences section were open questions, not settled ones, until this repo actually got pushed and the pipeline ran on real GitHub infrastructure. It has now, and both resolved cleanly: `build_and_test`'s Debug+ASan+UBSan job ran to completion successfully, which the local dev machine could never confirm on its own — the Apple Clang 17 ASan hang mentioned above is specific to that machine, and Linux's sanitizer toolchain doesn't share it. `static_analysis` also completed without failing the job. Worth being precise about what that does and doesn't prove: GitHub's API confirms every step in both jobs finished successfully, but this session doesn't have log-read access to the run (a permissions boundary, not a data gap) to say with certainty whether `clang-tidy` printed any non-blocking warnings along the way — `continue-on-error` means the job would show green either way. Anyone with repo access can check the Actions tab directly for the full `clang-tidy` output.

@@ -3,13 +3,14 @@
 #include "benchmark/WorkloadGenerator.h"
 #include "engine/Types.h"
 #include "engine/Order.h"
+#include <cstddef>
+#include <exception>
 #include <vector>
 #include <string>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <limits>
-#include <iostream>
 
 namespace engine {
 namespace replay {

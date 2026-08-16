@@ -37,7 +37,7 @@ Differential tests (`V4MatchesBaseline`, `V4MatchesBaselineOnWorstCaseSamePrice`
 | Heavy Cancels | **+97.1%** | +243% |
 | Worst Case | **+100.6%** | +149% |
 
-Every workload roughly doubled or better on top of 3.0 — including Worst Case, which is the headline result here: 3.0's −10.3% regression on that workload is not just recovered, it's overcorrected into the single largest relative gain of the three. Trade counts matched all prior versions on every workload.
+Every workload roughly doubled or better on top of 3.0 — including Worst Case, which is the headline result here: 3.0's −10.3% regression on that workload is not just recovered, it's overcorrected into a +100.6% gain, the biggest reversal of the three (Random's +122.3% is the largest gain outright, but it didn't start from a regression). Trade counts matched all prior versions on every workload.
 
 The standing hypothesis metric keeps moving in the same direction it has all through Phase 4 — the Worst-Case/Random-Prices throughput ratio: **1.719 → 1.552 → 1.204 → 1.086** across 1.0/2.0/3.0/4.0 (this run). Four versions in, the two workloads that started nearly a factor of two apart are now within 9% of each other.
 

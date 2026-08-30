@@ -2,7 +2,7 @@
 
 [![C++ CI](https://github.com/kankaniakshat185/low-latency-matching-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kankaniakshat185/low-latency-matching-engine/actions/workflows/ci.yml)
 
-A limit order book and matching engine, built from scratch in C++20 — price-time priority, partial fills, limit and market orders. Single instrument, single thread, by design (see Known Limitations below). The point isn't just that it matches orders correctly; it's that every performance claim in this repo is backed by two things: a differential test proving the faster version is still correct, and real hardware counters, not just a wall-clock number.
+A limit order book and matching engine, built from scratch in C++ — price-time priority, partial fills, limit and market orders. Single instrument, single thread, by design (see Known Limitations below). The point isn't just that it matches orders correctly; it's that every performance claim in this repo is backed by two things: a differential test proving the faster version is still correct, and real hardware counters, not just a wall-clock number.
 
 Blog: [Inside a 14.5M Ops/sec C++ Order Book Matching Engine](https://akshatkankani.vercel.app/tech-blog/low-latency-matching-engine)
 

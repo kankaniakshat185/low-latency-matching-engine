@@ -23,8 +23,6 @@ The standing hypothesis from Phase 2 — *"why does Worst-Case-Same-Price consis
 
 Four implementations later, the two workloads that started nearly a factor of two apart are within 9% of each other. Trade counts matched across all four versions on every workload in this run — the correctness question and the performance question stayed fully separable the entire way through, per the differential test suite's actual job (see `docs/14_testing_strategy.md` and `tests/differential_test.cpp`'s closing `AllFourVersionsMatchOnASharedWorkload` test).
 
-See [`interview_prep.md`](interview_prep.md) for a condensed, talking-points version of this whole table plus the reasoning behind it.
-
 ## Historical Log
 
 | Version | Environment | Optimization | Benchmark Before | Benchmark After | Profiler Evidence | Engineering Takeaway |
@@ -40,4 +38,4 @@ See [`interview_prep.md`](interview_prep.md) for a condensed, talking-points ver
 *   ~~4.0's Instruction Processing Bottleneck increase is flagged but not root-caused~~ — resolved: multiplying each workload's percentage back against its own total cycle count shows the absolute processing-bound cost held flat or dropped in every workload (Random −35.9%); the percentage rose only because the denominator collapsed faster. A separate, more obvious-sounding hypothesis (an oversized cancellation-index array blowing the working set out of cache) was tested directly and ruled out first. See ADR-0022's update.
 *   2.0/3.0/4.0's absolute numbers above should all be re-measured on an idle machine before being treated as authoritative; the relative comparisons (same process, same run) are sound regardless.
 *   The per-category variation noted in 2.0's takeaway (why Instruction Delivery vs. Instruction Processing improves more in different workloads) is now partly explained by occupancy density (3.0) and lookup-structure shape (4.0), but still not completely — the four-way split between Cycles/Delivery/Discarded/Processing per workload doesn't yet have one unifying explanation.
-*   Phase 4's comparative study (1.0 → 4.0) is functionally complete as a "does each idea help, and by how much" exercise. What's left is closing the loop: a final cross-version summary and `interview_prep.md` (see the Phase 4 roadmap) rather than a new numbered version.
+*   Phase 4's comparative study (1.0 → 4.0) is functionally complete as a "does each idea help, and by how much" exercise. What's left is re-measuring on an idle machine, not a new numbered version.

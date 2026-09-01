@@ -6,6 +6,17 @@ A limit order book and matching engine, built from scratch in C++ — price-time
 
 Blog: [Inside a 14.5M Ops/sec C++ Order Book Matching Engine](https://akshatkankani.vercel.app/tech-blog/low-latency-matching-engine)
 
+## Features
+
+*   Price-time priority matching — limit and market orders, partial fills, strict FIFO within a price level.
+*   O(1) cancellation via an `OrderId -> location` index (a hash map in 1.0-3.0, a flat vector in 4.0).
+*   Four interchangeable `OrderBook` implementations behind one templated engine, swappable with zero call-site changes (see Phase 4 below).
+*   Strict input validation at every external boundary — a duplicate `OrderId`, a zero-quantity order, and every malformed CSV field (negative numbers, trailing garbage, bad Action/Side characters) are rejected loudly, not coerced.
+*   Historical CSV replay (`data/sample.csv`) alongside three synthetic benchmark workloads.
+*   71 tests: behavioral correctness, adversarial input, a 20,000-op fuzz test checking book invariants after every operation, and differential testing across all four `OrderBook` implementations (byte-identical trade ledgers, including a closing test that runs all four through one shared workload at once). 99.2% line coverage, 100% function coverage.
+*   Real hardware-counter evidence (Apple Instruments CPU Counters, `os_signpost`-correlated) behind every Phase 4 performance claim, not just wall-clock numbers.
+*   5-job CI pipeline: sanitized debug build, release build, static analysis, formatting check, coverage report — all running on every push.
+
 ## Architecture
 
 Composition over inheritance, all the way down: `MatchingEngine` owns an `OrderBook`, which owns `PriceLevel`s. Nothing is virtual. That's not a style preference — it's what lets the internals (`std::map` vs. a flat array, `std::list` vs. an intrusive pool-backed list) get swapped out and profiled independently, without touching the matching logic itself or any call site above it. `MatchingEngine` is templated on the book type for exactly this reason; see Phase 4 below for what that bought.
@@ -25,17 +36,6 @@ flowchart TD
     C -.-> K["3.0 OrderBookV3<br/>flat tick-indexed array + occupancy bitmap"]
     C -.-> L["4.0 OrderBookV4<br/>V3 + cached best-tick + flat id index"]
 ```
-
-## Features
-
-*   Price-time priority matching — limit and market orders, partial fills, strict FIFO within a price level.
-*   O(1) cancellation via an `OrderId -> location` index (a hash map in 1.0-3.0, a flat vector in 4.0).
-*   Four interchangeable `OrderBook` implementations behind one templated engine, swappable with zero call-site changes (see Phase 4 below).
-*   Strict input validation at every external boundary — a duplicate `OrderId`, a zero-quantity order, and every malformed CSV field (negative numbers, trailing garbage, bad Action/Side characters) are rejected loudly, not coerced.
-*   Historical CSV replay (`data/sample.csv`) alongside three synthetic benchmark workloads.
-*   71 tests: behavioral correctness, adversarial input, a 20,000-op fuzz test checking book invariants after every operation, and differential testing across all four `OrderBook` implementations (byte-identical trade ledgers, including a closing test that runs all four through one shared workload at once). 99.2% line coverage, 100% function coverage.
-*   Real hardware-counter evidence (Apple Instruments CPU Counters, `os_signpost`-correlated) behind every Phase 4 performance claim, not just wall-clock numbers.
-*   5-job CI pipeline: sanitized debug build, release build, static analysis, formatting check, coverage report — all running on every push.
 
 ## Benchmarking
 
@@ -120,9 +120,8 @@ The full writeup — architecture, design decisions, and the whole optimization 
 *   [Design Decisions](public_docs/design_decisions.md)
 *   [Optimization History](public_docs/optimization_history.md)
 *   [Architecture Decision Log](public_docs/adr/README.md) — every decision, major or minor, individually dated
-*   [Interview Prep](public_docs/interview_prep.md) — a condensed, talking-points version of Phase 4
 
-There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
+There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal, plus an interview-prep cheat sheet) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
 
 ## Build Instructions
 The project fetches GoogleTest automatically via CMake FetchContent on first build (requires a network connection). The engine and benchmark executables themselves have zero runtime dependencies.

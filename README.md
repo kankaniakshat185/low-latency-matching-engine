@@ -8,16 +8,16 @@ Blog: [Inside a 14.5M Ops/sec C++ Order Book Matching Engine](https://akshatkank
 
 *   Price-time priority matching — limit and market orders, partial fills, strict FIFO within a price level.
 *   O(1) cancellation via an `OrderId -> location` index (a hash map in 1.0-3.0, a flat vector in 4.0).
-*   Four interchangeable `OrderBook` implementations behind one templated engine, swappable with zero call-site changes (see Phase 4 below).
+*   Four interchangeable `OrderBook` implementations behind one templated engine, swappable with zero call-site changes (see The Comparative Study below).
 *   Strict input validation at every external boundary — a duplicate `OrderId`, a zero-quantity order, and every malformed CSV field (negative numbers, trailing garbage, bad Action/Side characters) are rejected loudly, not coerced.
 *   Historical CSV replay (`data/sample.csv`) alongside three synthetic benchmark workloads.
 *   71 tests: behavioral correctness, adversarial input, a 20,000-op fuzz test checking book invariants after every operation, and differential testing across all four `OrderBook` implementations (byte-identical trade ledgers, including a closing test that runs all four through one shared workload at once). 99.2% line coverage, 100% function coverage.
-*   Real hardware-counter evidence (Apple Instruments CPU Counters, `os_signpost`-correlated) behind every Phase 4 performance claim, not just wall-clock numbers.
+*   Real hardware-counter evidence (Apple Instruments CPU Counters, `os_signpost`-correlated) behind every performance claim in the comparative study below, not just wall-clock numbers.
 *   5-job CI pipeline: sanitized debug build, release build, static analysis, formatting check, coverage report — all running on every push.
 
 ## Architecture
 
-Composition over inheritance, all the way down: `MatchingEngine` owns an `OrderBook`, which owns `PriceLevel`s. Nothing is virtual. That's not a style preference — it's what lets the internals (`std::map` vs. a flat array, `std::list` vs. an intrusive pool-backed list) get swapped out and profiled independently, without touching the matching logic itself or any call site above it. `MatchingEngine` is templated on the book type for exactly this reason; see Phase 4 below for what that bought.
+Composition over inheritance, all the way down: `MatchingEngine` owns an `OrderBook`, which owns `PriceLevel`s. Nothing is virtual. That's not a style preference — it's what lets the internals (`std::map` vs. a flat array, `std::list` vs. an intrusive pool-backed list) get swapped out and profiled independently, without touching the matching logic itself or any call site above it. `MatchingEngine` is templated on the book type for exactly this reason; see The Comparative Study below for what that bought.
 
 ```mermaid
 flowchart TD
@@ -43,9 +43,9 @@ Three synthetic workloads, each isolating a different part of the system: orders
 
 ## Baseline Performance (1.0)
 
-The first working version uses `std::map`/`std::list`/`std::unordered_map` throughout — correct and easy to verify, deliberately not optimized yet. These are the numbers before any of Phase 4's data-structure work below.
+The first working version uses `std::map`/`std::list`/`std::unordered_map` throughout — correct and easy to verify, deliberately not optimized yet. These are the numbers before any of the data-structure work in The Comparative Study below.
 
-**Environment**: Apple M2 (ARM64), macOS 26.5.1, `clang++ -O3 -std=c++20`
+**Environment**: Apple M2 (ARM64), macOS 26.5.1, `clang++ -O3 -std=c++20`. Like every other benchmark number in this README, this was measured under real background system load on a personal machine, not a dedicated bench — a fresh re-run under different load conditions has been observed to produce roughly half these absolute figures while preserving the same relative shape between workloads. Treat the numbers below as illustrative of the pattern, not a precise reference point; see Known Bottlenecks below.
 
 | Workload (1M Actions) | Throughput | Median Latency | P99 Latency |
 | :--- | :--- | :--- | :--- |
@@ -53,7 +53,7 @@ The first working version uses `std::map`/`std::list`/`std::unordered_map` throu
 | **Heavy Cancels** | ~8.73 M actions/sec | 125 ns | 541 ns |
 | **Worst-Case** | ~15.73 M actions/sec | 42 ns | 209 ns |
 
-Worst-Case beating Random Prices by more than 2x here is the whole reason Phase 4 exists — it's a strong hint that `std::map`'s tree traversal is costing more than it looks like on paper, and Phase 4 below is what actually went and checked.
+Worst-Case beating Random Prices here is the whole reason the comparative study below exists — it's a strong hint that `std::map`'s tree traversal is costing more than it looks like on paper, and the comparative study is what actually went and checked.
 
 ## The Comparative Study
 
@@ -62,7 +62,8 @@ The 4 step implementation replaces the baseline's data structures one variable a
 *   **2.0 (done)**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator. Price levels unchanged (still `std::map`). **+33–35% throughput** across all three workloads; every hardware bottleneck category improved (Instruments CPU Counters); the Worst-Case/Random-Prices throughput ratio barely moved (1.668 → 1.655) — allocation cost was real but wasn't what explained that persistent gap.
 *   **3.0 (done)**: replaced `std::map<Price, PriceLevel>` with a flat, tick-indexed array plus an occupancy bitmap. **+23.7% (Random) and +24.2% (Heavy Cancels)** on top of 2.0 — but a genuine **−10.3% regression on Worst Case**, confirmed at the hardware-counter level, not noise. The mechanism: the array's bitmap scan starts from the edge with no cached "best price," so its cost scales with how far the sole occupied price is from that edge — cheap when many levels are active, expensive when there's exactly one. The standing hypothesis finally moved regardless: the Worst-Case/Random-Prices ratio dropped from ~1.65 to **1.195**. Full mechanism, and the identified-but-not-yet-built fix, in [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md).
 *   **4.0 (done)**: cached the best-price tick per side (closes 3.0's regression) and replaced the `OrderId → OrderLocation` cancellation index — a `std::unordered_map` since 1.0 — with a flat vector indexed directly by id. **+122.3% (Random), +97.1% (Heavy Cancels), +100.6% (Worst Case)** on top of 3.0 — every workload roughly doubled, and the one that regressed in 3.0 saw the biggest reversal of the three (a real regression turned into a strong gain), even though Random's +122.3% is the largest gain outright. The Worst-Case/Random-Prices ratio closes further still, to **1.086**. Instruments shows the fix is real: Discarded Bottleneck (branch-misprediction cost) drops sharply everywhere. A second category (Instruction Processing) rises in *percentage* terms everywhere too — resolved, not left hanging: its absolute cost held flat or dropped in every workload, and the percentage only rose because the total cycle count shrank even faster. Full breakdown in [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
-*   **Next**: Phase 4's comparative study (1.0 → 4.0) is functionally complete. What's left is closing the loop — a final cross-version summary and interview-prep write-up — not a new numbered version.
+
+This comparative study (1.0 → 4.0) is complete — the table below is the final cross-version summary. What's still open isn't a new numbered version, it's re-measuring these numbers on an idle machine (see Known Bottlenecks below): every figure above was measured under real background system load on a personal machine, not a quiet dedicated bench.
 
 All four versions measured back-to-back in one run (the cleanest single comparison — see `optimization_history.md`'s "Final Comparison" for why cross-row numbers elsewhere in this repo aren't directly comparable the same way):
 
@@ -76,7 +77,7 @@ All four versions measured back-to-back in one run (the cleanest single comparis
 
 What's still genuinely limiting this engine's performance, as measured, not guessed at:
 
-*   **Absolute numbers need a clean re-run.** Every Phase 4 number above was measured under real background system load (this is a personal machine, not a dedicated bench). Relative deltas (same process, same run) are trustworthy; absolute throughput/latency figures carry that caveat until re-measured on an idle machine.
+*   **Absolute numbers need a clean re-run.** Every throughput/latency number in this README — the 1.0 baseline table included — was measured under real background system load (this is a personal machine, not a dedicated bench). Relative deltas (same process, same run, e.g. the comparative study's version-to-version deltas) are trustworthy; absolute figures carry that caveat until re-measured on an idle machine. A spot re-run of the 1.0 baseline produced throughput roughly half the table's figures under heavier load, with the same relative shape between workloads intact — a direct demonstration of how much this caveat matters, not just a disclaimer.
 *   **`std::chrono` observer overhead.** 20-40ns per call, called twice per operation — up to ~80ns of any measured latency figure may be the timer, not the engine. Worst at the nanosecond scale this project operates at.
 *   **No core pinning.** Nothing is pinned to isolated CPU cores, so P99.9/Max latency figures likely include OS scheduling interrupts alongside real algorithmic stalls.
 *   **Single-threaded ceiling.** No concurrent order ingestion — throughput is bounded by one core's worth of work, by design (see Non-Goals below).
@@ -135,7 +136,7 @@ make
 # Run performance benchmarks (1.0 baseline only — what the numbers above come from)
 ./engine_benchmark
 
-# Run the Phase 4 comparative study (1.0 vs 2.0 vs 3.0 vs 4.0, side by side)
+# Run the comparative study (1.0 vs 2.0 vs 3.0 vs 4.0, side by side)
 ./variant_benchmark
 
 # Check formatting (from the repo root)

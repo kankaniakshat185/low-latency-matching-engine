@@ -122,7 +122,25 @@ The full writeup — architecture, design decisions, and the whole optimization 
 
 There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal, plus an interview-prep cheat sheet) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
 
-## Build Instructions
+## Project Structure
+
+```
+src/
+├── engine/       # The 1.0 baseline: OrderBook, MatchingEngine, PriceLevel, Order, Trade
+├── structures/   # OrderBookV2/V3/V4 — the comparative-study implementations, plus the OrderPool allocator
+├── benchmark/    # WorkloadGenerator, engine_benchmark's main, and compare_variants.cpp (the comparative-study binary)
+├── replay/       # CSVParser — historical order-flow replay
+└── utils/        # Timer
+
+tests/            # engine_test.cpp, replay_test.cpp, differential_test.cpp, structures_test.cpp
+data/             # sample.csv — a small historical replay fixture
+public_docs/      # Architecture, design decisions, optimization history, the ADR log
+.github/workflows/  # ci.yml — the 5-job pipeline
+```
+
+`MatchingEngine` (in `engine/`) is templated on the book type, so it's the same class instantiated over every implementation in `structures/` — nothing in `engine/` changes to support them.
+
+## Build and Run Locally
 The project fetches GoogleTest automatically via CMake FetchContent on first build (requires a network connection). The engine and benchmark executables themselves have zero runtime dependencies.
 
 ```bash

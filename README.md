@@ -1,4 +1,4 @@
-# Ultra Low-Latency Matching Engine
+<h1 align="center">Low-Latency Matching Engine</h1>
 
 [![C++ CI](https://github.com/kankaniakshat185/low-latency-matching-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kankaniakshat185/low-latency-matching-engine/actions/workflows/ci.yml)
 

@@ -98,7 +98,7 @@ This is a single-machine, single-instrument, single-threaded matching engine —
 71 tests across four files, run on every push (`engine_tests`):
 
 *   **Behavioral correctness** — exact matches, partial fills, price-time priority, cancellation, market-order sweep-and-discard, plus explicit edge cases (empty book, an id that was never inserted, a price level actually erased from the book after it fully drains, not just left empty).
-*   **Adversarial input** — 8 CSV-parser cases (negative numbers, malformed rows, bad Action/Side characters, a token with no leading digit at all) and a 20,000-operation fuzz test that deliberately reuses live `OrderId`s and checks the book's invariants after every single operation.
+*   **Adversarial input** — 11 CSV-parser cases (negative numbers, malformed rows, bad Action/Side characters, a token with no leading digit at all, a malformed first line with no header, blank lines between valid rows) and a 20,000-operation fuzz test that deliberately reuses live `OrderId`s and checks the book's invariants after every single operation.
 *   **Differential testing across all four `OrderBook` implementations** — the same randomized action sequence (plus a deliberately adversarial all-same-price workload) replayed through each variant, asserting byte-identical trade ledgers against the 1.0 baseline before any performance number is trusted. A closing test runs all four through one shared workload at once.
 *   **Direct structural tests** for each variant's own boundary behavior — pool exhaustion, out-of-range price/`OrderId` handling, constructor validation — bypassing `MatchingEngine` entirely, since differential testing alone only ever supplies valid input.
 
@@ -148,3 +148,6 @@ find src tests -name '*.cpp' -o -name '*.h' | xargs clang-format --style=file --
 cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 find src -name '*.cpp' -o -name '*.h' | xargs clang-tidy -p build
 ```
+
+## License
+[MIT](LICENSE)

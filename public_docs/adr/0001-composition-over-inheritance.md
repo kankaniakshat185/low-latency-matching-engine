@@ -13,7 +13,13 @@ Plain composition, concrete types, no virtual dispatch anywhere. `MatchingEngine
 
 ## Alternatives considered
 
-A polymorphic order hierarchy — `LimitOrder`/`MarketOrder` subclasses matched through a virtual `match()` — was the obvious first idea, and it got rejected quickly. Every virtual call is a jump the branch predictor can't help with as well as a direct call, and polymorphic orders would need to live behind pointers instead of sitting by value in `std::list<Order>`. `Order.h` even has a comment about this: the `price` field is "irrelevant for Market orders, but included in struct to avoid polymorphism."
+A polymorphic order hierarchy — `LimitOrder`/`MarketOrder` subclasses matched through a virtual `match()` — was the obvious first idea, and it got rejected quickly, for two concrete mechanical reasons rather than a style preference:
+
+A non-virtual call's target address is fixed at compile time, so the CPU never has to guess where it lands. A virtual call can't do that — `LimitOrder` and `MarketOrder` overriding a shared `match()` means the real target is read out of a per-object vtable at runtime, so the *same call site* jumps to a different address depending on which concrete type showed up. The branch predictor has to guess that destination ahead of time to keep the pipeline full, and it guesses worse on a target that varies call-to-call than on one that's always identical — every wrong guess means discarding speculative work and re-fetching.
+
+Separately: `LimitOrder` and `MarketOrder` would be different sizes, and `std::list<Order>`'s nodes are all one fixed size — polymorphic orders can't sit in the list by value the way a flat struct can. They'd need to live behind pointers instead, allocated wherever, turning every list walk into a pointer-chase to a possibly-cold cache line — the same cache-locality cost this ADR's own Context section is trying to avoid, just introduced from a different direction.
+
+`Order.h` even has a comment about the first fix: the `price` field is "irrelevant for Market orders, but included in struct to avoid polymorphism."
 
 An abstract `OrderBook` interface (so an implementation could be swapped via a base pointer) went the same way. Phase 4's whole point is swapping `OrderBook`'s internals — adding an indirection layer just to enable that swap defeats the purpose, since every call pays for it regardless of which concrete implementation is active.
 

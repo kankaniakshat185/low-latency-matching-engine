@@ -15,7 +15,7 @@ The short version of every decision that shaped this codebase — one entry per 
 
 ## 3. Composition Over Inheritance
 **Decision**: `MatchingEngine` owns `OrderBook`, which owns `PriceLevel` — plain composition, no inheritance tree, nothing virtual anywhere in the hierarchy.
-**Rationale**: A virtual call is an indirect jump the branch predictor can't help with nearly as well as a direct one, and polymorphic orders would need to live behind pointers instead of sitting by value in a container. Composition keeps the memory layout flat and predictable while still leaving the internals free to swap — which is exactly what made Phase 4's four-implementation comparison possible without redesigning anything.
+**Rationale**: A virtual call's target isn't known until runtime, so the branch predictor has to guess it fresh each time instead of relying on a fixed, always-correct address — and polymorphic orders would need to live behind pointers instead of sitting by value in a container, since different subclasses would be different sizes. Composition keeps the memory layout flat and predictable while still leaving the internals free to swap — which is exactly what made Phase 4's four-implementation comparison possible without redesigning anything. Full mechanism in ADR-0001.
 
 ## 4. Infrastructure & Testing
 **Decision**: GoogleTest for the whole test suite, ASan+UBSan in every Debug build, `-O3` and no sanitizer overhead in Release, one GitHub Actions workflow — nothing beyond what's needed to actually verify correctness and performance.

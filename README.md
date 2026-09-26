@@ -15,7 +15,7 @@ Blog: [Inside a 14.5M Ops/sec C++ Order Book Matching Engine](https://akshatkank
 *   Real hardware-counter evidence (Apple Instruments CPU Counters, `os_signpost`-correlated) behind every performance claim in the comparative study below, not just wall-clock numbers.
 *   5-job CI pipeline: sanitized debug build, release build, static analysis, formatting check, coverage report — all running on every push.
 
-## Architecture
+## System Architecture
 
 Composition over inheritance, all the way down: `MatchingEngine` owns an `OrderBook`, which owns `PriceLevel`s. Nothing is virtual. That's not a style preference — it's what lets the internals (`std::map` vs. a flat array, `std::list` vs. an intrusive pool-backed list) get swapped out and profiled independently, without touching the matching logic itself or any call site above it. `MatchingEngine` is templated on the book type for exactly this reason; see The Comparative Study below for what that bought.
 
@@ -73,7 +73,7 @@ All four versions measured back-to-back in one run (the cleanest single comparis
 | Heavy Cancels | 4.23 M/s | 5.96 M/s | 7.37 M/s | **14.52 M/s** | **+243%** |
 | Worst Case | 5.38 M/s | 6.75 M/s | 6.68 M/s | **13.39 M/s** | **+149%** |
 
-## Known Bottlenecks
+## Bottlenecks
 
 What's still genuinely limiting this engine's performance, as measured, not guessed at:
 
@@ -82,7 +82,7 @@ What's still genuinely limiting this engine's performance, as measured, not gues
 *   **No core pinning.** Nothing is pinned to isolated CPU cores, so P99.9/Max latency figures likely include OS scheduling interrupts alongside real algorithmic stalls.
 *   **Single-threaded ceiling.** No concurrent order ingestion — throughput is bounded by one core's worth of work, by design (see Non-Goals below).
 
-## Known Limitations & Non-Goals
+## Limitations & Non-Goals
 
 This is a single-machine, single-instrument, single-threaded matching engine — deliberately, per the project's phased scope (see [Documentation](#documentation) below). If you're evaluating it for anything beyond that scope, these are the boundaries as of the current phase, not oversights:
 
@@ -110,37 +110,7 @@ This is a single-machine, single-instrument, single-threaded matching engine —
 *   **`clang-tidy`**, non-blocking in CI (see [ADR-0012](public_docs/adr/0012-ci-pipeline-design.md) for why it started non-blocking on purpose).
 *   **`gcovr`** coverage reporting, not gated on a threshold — a tracked, visible number instead of an unverifiable claim.
 
-## Documentation
-The full writeup — architecture, design decisions, and the whole optimization history — lives in [`public_docs/`](public_docs/):
-
-*   [Architecture](public_docs/architecture.md)
-*   [Matching Engine](public_docs/matching_engine.md)
-*   [Benchmarking Methodology](public_docs/benchmarking.md)
-*   [Design Decisions](public_docs/design_decisions.md)
-*   [Optimization History](public_docs/optimization_history.md)
-*   [Architecture Decision Log](public_docs/adr/README.md) — every decision, major or minor, individually dated
-
-There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal, plus an interview-prep cheat sheet) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
-
-## Project Structure
-
-```
-src/
-├── engine/       # The 1.0 baseline: OrderBook, MatchingEngine, PriceLevel, Order, Trade
-├── structures/   # OrderBookV2/V3/V4 — the comparative-study implementations, plus the OrderPool allocator
-├── benchmark/    # WorkloadGenerator, engine_benchmark's main, and compare_variants.cpp (the comparative-study binary)
-├── replay/       # CSVParser — historical order-flow replay
-└── utils/        # Timer
-
-tests/            # engine_test.cpp, replay_test.cpp, differential_test.cpp, structures_test.cpp
-data/             # sample.csv — a small historical replay fixture
-public_docs/      # Architecture, design decisions, optimization history, the ADR log
-.github/workflows/  # ci.yml — the 5-job pipeline
-```
-
-`MatchingEngine` (in `engine/`) is templated on the book type, so it's the same class instantiated over every implementation in `structures/` — nothing in `engine/` changes to support them.
-
-## Build and Run Locally
+## Local Development Initialization
 The project fetches GoogleTest automatically via CMake FetchContent on first build (requires a network connection). The engine and benchmark executables themselves have zero runtime dependencies.
 
 ```bash
@@ -165,5 +135,35 @@ cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 find src -name '*.cpp' -o -name '*.h' | xargs clang-tidy -p build
 ```
 
+## Project Structure
+
+```
+src/
+├── engine/       # The 1.0 baseline: OrderBook, MatchingEngine, PriceLevel, Order, Trade
+├── structures/   # OrderBookV2/V3/V4 — the comparative-study implementations, plus the OrderPool allocator
+├── benchmark/    # WorkloadGenerator, engine_benchmark's main, and compare_variants.cpp (the comparative-study binary)
+├── replay/       # CSVParser — historical order-flow replay
+└── utils/        # Timer
+
+tests/            # engine_test.cpp, replay_test.cpp, differential_test.cpp, structures_test.cpp
+data/             # sample.csv — a small historical replay fixture
+public_docs/      # Architecture, design decisions, optimization history, the ADR log
+.github/workflows/  # ci.yml — the 5-job pipeline
+```
+
+`MatchingEngine` (in `engine/`) is templated on the book type, so it's the same class instantiated over every implementation in `structures/` — nothing in `engine/` changes to support them.
+
+## Documentation
+The full writeup — architecture, design decisions, and the whole optimization history — lives in [`public_docs/`](public_docs/):
+
+*   [Architecture](public_docs/architecture.md)
+*   [Matching Engine](public_docs/matching_engine.md)
+*   [Benchmarking Methodology](public_docs/benchmarking.md)
+*   [Design Decisions](public_docs/design_decisions.md)
+*   [Optimization History](public_docs/optimization_history.md)
+*   [Architecture Decision Log](public_docs/adr/README.md) — every decision, major or minor, individually dated
+
+There is also a `docs/` directory referenced in some of the writing above (a running "engineering notebook" / learning journal, plus an interview-prep cheat sheet) — it's intentionally gitignored and local-only, not published, so a fresh clone of this repo won't have it. `public_docs/` is the polished, tracked counterpart meant for readers.
+
 ## License
-[MIT](LICENSE)
+MIT License. See `LICENSE` for more information.

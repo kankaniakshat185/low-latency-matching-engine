@@ -1,6 +1,14 @@
 <h1 align="center">Low-Latency Matching Engine</h1>
 
-A limit order book and matching engine, built from scratch in C++ — price-time priority, partial fills, limit and market orders. Single instrument, single thread, by design (see Known Limitations below). The point isn't just that it matches orders correctly; it's that every performance claim in this repo is backed by two things: a differential test proving the faster version is still correct, and real hardware counters, not just a wall-clock number.
+A limit order book and matching engine built from scratch in C++20 — price-time priority, partial fills, limit and market orders, single instrument, single-threaded by design (see Limitations & Non-Goals below). Every performance claim here is backed by two things: a differential test proving the faster version is still correct, and real hardware counters, not just a wall-clock number.
+
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#system-architecture">Architecture</a> ·
+  <a href="#engineering-decisions-that-mattered">Engineering Decisions</a> ·
+  <a href="#the-comparative-study">Results</a> ·
+  <a href="#local-development-initialization">Build & Run</a>
+</p>
 
 Blog: [Inside a 14.5M Ops/sec C++ Order Book Matching Engine](https://akshatkankani.vercel.app/tech-blog/low-latency-matching-engine)
 
@@ -9,15 +17,15 @@ Blog: [Inside a 14.5M Ops/sec C++ Order Book Matching Engine](https://akshatkank
 *   Price-time priority matching — limit and market orders, partial fills, strict FIFO within a price level.
 *   O(1) cancellation via an `OrderId -> location` index (a hash map in 1.0-3.0, a flat vector in 4.0).
 *   Four interchangeable `OrderBook` implementations behind one templated engine, swappable with zero call-site changes (see The Comparative Study below).
-*   Strict input validation at every external boundary — a duplicate `OrderId`, a zero-quantity order, and every malformed CSV field (negative numbers, trailing garbage, bad Action/Side characters) are rejected loudly, not coerced.
+*   Strict input validation at every external boundary — duplicate `OrderId`s, zero-quantity orders, and malformed CSV fields (negative numbers, trailing garbage, bad Action/Side characters) are all rejected loudly, not coerced.
 *   Historical CSV replay (`data/sample.csv`) alongside three synthetic benchmark workloads.
-*   71 tests: behavioral correctness, adversarial input, a 20,000-op fuzz test checking book invariants after every operation, and differential testing across all four `OrderBook` implementations (byte-identical trade ledgers, including a closing test that runs all four through one shared workload at once). 99.2% line coverage, 100% function coverage.
-*   Real hardware-counter evidence (Apple Instruments CPU Counters, `os_signpost`-correlated) behind every performance claim in the comparative study below, not just wall-clock numbers.
+*   71 tests — behavioral correctness, adversarial input, a 20,000-op fuzz test, and differential testing across all four `OrderBook` implementations (byte-identical trade ledgers, plus a closing test running all four at once). 99.2% line coverage, 100% function coverage.
+*   Real hardware-counter evidence (Apple Instruments, `os_signpost`-correlated) behind every performance claim below, not just wall-clock numbers.
 *   5-job CI pipeline: sanitized debug build, release build, static analysis, formatting check, coverage report — all running on every push.
 
 ## System Architecture
 
-Composition over inheritance, all the way down: `MatchingEngine` owns an `OrderBook`, which owns `PriceLevel`s. Nothing is virtual. That's not a style preference — it's what lets the internals (`std::map` vs. a flat array, `std::list` vs. an intrusive pool-backed list) get swapped out and profiled independently, without touching the matching logic itself or any call site above it. `MatchingEngine` is templated on the book type for exactly this reason; see The Comparative Study below for what that bought.
+Composition over inheritance, all the way down: `MatchingEngine` owns an `OrderBook`, which owns `PriceLevel`s — nothing virtual anywhere. That's what lets the internals (`std::map` vs. a flat array, `std::list` vs. an intrusive pool-backed list) get swapped out and profiled independently, without touching matching logic or any call site above it. `MatchingEngine` is templated on the book type for exactly this reason — see The Comparative Study below.
 
 ```mermaid
 flowchart TD
@@ -54,55 +62,55 @@ Four decisions from the [Architecture Decision Log](public_docs/adr/README.md) t
 
 ### 1. Composition Over Inheritance, Not a Style Preference
 
-**Problem**: `OrderBook`'s internals needed to be swappable across four separate implementations without touching `MatchingEngine` or any call site above it.
+**Problem**: `OrderBook`'s internals needed to be swappable across four implementations without touching `MatchingEngine` or any caller.
 
-**Approach**: Plain composition, zero virtual functions anywhere. A non-virtual call's target is fixed at compile time — the CPU never has to guess where it lands. A virtual call can't do that: the real target is read from a per-object vtable at runtime, so the branch predictor has to guess a destination that changes call-to-call, and it guesses worse on that than on a fixed one. Polymorphic `Order` subclasses would also need to live behind pointers instead of sitting by value inside `std::list`, since different subclasses would be different sizes.
+**Approach**: Plain composition, zero virtual functions. A non-virtual call's target is fixed at compile time; a virtual call's isn't — it's read from a per-object vtable at runtime, so the branch predictor has to guess a destination that changes call-to-call, and guesses worse on it. Polymorphic `Order` subclasses would also need to live behind pointers, not by value in `std::list`, since different subclasses are different sizes.
 
-**Result**: A flat, predictable memory layout, and a design that later let `MatchingEngine` become a template (`MatchingEngineT<BookT>`) — swapping in four different `OrderBook` implementations with zero changes to the matching logic itself.
+**Result**: A flat, predictable memory layout — and later, `MatchingEngine` became a template (`MatchingEngineT<BookT>`), swapping in four `OrderBook` implementations with zero changes to matching logic.
 
-**Tradeoff**: No way to run two `OrderBook` implementations side by side at runtime without a compile-time switch. Acceptable here, since the comparative study benchmarks each version sequentially, not concurrently. See [ADR-0001](public_docs/adr/0001-composition-over-inheritance.md).
+**Tradeoff**: No way to run two implementations side by side at runtime without a compile-time switch — fine, since the comparative study benchmarks each sequentially. See [ADR-0001](public_docs/adr/0001-composition-over-inheritance.md).
 
 ### 2. Differential Testing Before Any Performance Claim Counts
 
-**Problem**: A faster reimplementation that's quietly wrong is worthless — and this project ended up with four independent `OrderBook` implementations to compare against each other.
+**Problem**: A faster reimplementation that's quietly wrong is worthless, and this project ended up with four independent `OrderBook` implementations to compare.
 
-**Approach**: Replay the identical randomized action sequence — plus a deliberately adversarial workload where every order lands at the same price, exactly where implementations diverge internally the most — through all four implementations, and assert the resulting trade ledgers are byte-identical.
+**Approach**: Replay the same randomized action sequence — plus an adversarial workload where every order lands at one price, exactly where implementations diverge most — through all four, and assert byte-identical trade ledgers.
 
-**Result**: All four versions passed differential testing on the first attempt, including a closing test that runs all four through one shared workload at once. When 3.0 later showed a real performance regression, differential testing had already independently proven it was still *correct* — just slower, a separate question with a separate, unambiguous answer.
+**Result**: All four passed on the first attempt, including a closing test running all four against one shared workload at once. When 3.0 later regressed on performance, differential testing had already proven it was still correct — just slower, a separate question with a separate answer.
 
-**Tradeoff**: Differential testing proves the four implementations agree with each other, not that any one of them is correct in isolation — it relies on each version being independently authored to the same specification, not derived from another's code. See `tests/differential_test.cpp`.
+**Tradeoff**: Proves the four implementations agree with each other, not that any one is correct in isolation — it relies on each being independently authored to the same spec, not derived from another's code. See `tests/differential_test.cpp`.
 
 ### 3. Shipping a Real Regression, Then Fixing It a Version Later
 
-**Problem**: Replacing `std::map` with a flat, tick-indexed array (version 3.0) improved two of three benchmark workloads by roughly 24% — but measurably regressed the third by 10.3%.
+**Problem**: Replacing `std::map` with a flat, tick-indexed array (3.0) improved two of three workloads by ~24% — but regressed the third by 10.3%.
 
-**Approach**: Root-caused it with real hardware performance counters (Apple Instruments) instead of guessing: the array's occupancy-bitmap scan always started from the array's edge, so its cost scaled with how far the one occupied price was from that edge — cheap with many active price levels, expensive with exactly one.
+**Approach**: Root-caused with real hardware performance counters instead of guessing: the array's occupancy-bitmap scan always started from the edge, so its cost scaled with how far the one occupied price was from that edge — cheap with many active levels, expensive with exactly one.
 
-**Result**: Shipped 3.0 with the regression and its mechanism documented plainly, rather than quietly patching it before anyone saw the number. A version later (4.0), caching the current best price turned that same −10.3% into a **+100.6%** gain on the identical workload — the biggest reversal of the four workloads, confirmed at the hardware-counter level, not just wall-clock.
+**Result**: Shipped 3.0 with the regression documented plainly instead of quietly patched. A version later (4.0), caching the current best price turned that same −10.3% into **+100.6%** on the identical workload — the biggest reversal of the four, confirmed at the hardware-counter level.
 
-**Tradeoff**: A numbered version that's a strict regression on one axis looks worse in isolation than silently fixing it before release — but the mechanism, and the fix it directly pointed at, would never have been findable without the honest measurement first. See [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md) and [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
+**Tradeoff**: A version that's a strict regression on one axis looks worse in isolation than a silent fix — but the mechanism, and the fix it pointed at, wouldn't have been findable without the honest measurement first. See [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md) and [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
 
 ### 4. A Pool Allocator That Fails Loudly Instead of Growing Quietly
 
-**Problem**: `std::list`'s per-order heap allocation meant `malloc`/`free` on every insert and cancel — unpredictable-latency work at exactly the moment a matching engine can least afford it.
+**Problem**: `std::list`'s per-order heap allocation meant `malloc`/`free` on every insert and cancel — unpredictable-latency work at exactly the worst moment.
 
-**Approach**: A fixed-capacity slab allocator (`OrderPool`) hands out pre-reserved, fixed-size slots instead of calling `malloc`. Capacity is decided once, up front; exhaustion is a hard, immediate error, never a silent grow.
+**Approach**: A fixed-capacity slab allocator (`OrderPool`) hands out pre-reserved slots instead of calling `malloc`. Capacity is decided once, up front; exhaustion is a hard, immediate error, never a silent grow.
 
-**Result**: +33–35% throughput across all three synthetic workloads — and, checked via hardware counters rather than assumed, *every* bottleneck category improved, not just wall-clock time, consistent with allocation's cache-locality cost rippling through the whole pipeline.
+**Result**: +33–35% throughput across all three workloads — and every hardware bottleneck category improved, not just wall-clock time, consistent with allocation's cache-locality cost rippling through the whole pipeline.
 
-**Tradeoff**: The pool has to be sized correctly for the workload up front. A pool that silently grew when full would reintroduce the exact allocation-timing unpredictability it exists to eliminate — so under-sizing it fails immediately and loudly instead of degrading quietly under load. See [ADR-0017](public_docs/adr/0017-order-pool-fixed-capacity.md).
+**Tradeoff**: Has to be sized correctly up front. A pool that silently grew when full would reintroduce the exact latency-unpredictability it exists to eliminate — so under-sizing it fails immediately and loudly instead of degrading quietly. See [ADR-0017](public_docs/adr/0017-order-pool-fixed-capacity.md).
 
 ## Benchmarking
 
-Three synthetic workloads, each isolating a different part of the system: orders scattered across a wide price range, a 70/30 insert/cancel mix, and every order landing at the same price. Every benchmark run does a 10% warm-up pass first (discarded, not timed) to get the instruction cache and branch predictor out of their cold-start state, then measures throughput and per-operation latency in two separate passes — timing both in the same loop was an early bug here (see `optimization_history.md`'s 1.0.1 row) that made the throughput number partly measure its own stopwatch.
+Three synthetic workloads, each isolating a different part of the system: orders scattered across a wide price range, a 70/30 insert/cancel mix, and every order landing at the same price. Every run does a 10% warm-up pass first (discarded, not timed) to clear the instruction cache and branch predictor's cold-start state, then measures throughput and latency in two separate passes — timing both in one loop was an early bug here (see `optimization_history.md`'s 1.0.1 row) that made throughput partly measure its own stopwatch.
 
-`std::chrono`'s own overhead (20-40ns per call, called twice per operation) is a real, acknowledged limit on how much to trust nanosecond-scale numbers from this harness — see `public_docs/benchmarking.md` for the rest of what this methodology does and doesn't account for.
+`std::chrono` itself costs 20-40ns per call, called twice per operation — a real, acknowledged limit on how much to trust nanosecond-scale numbers here. See `public_docs/benchmarking.md` for the rest.
 
 ## Baseline Performance (1.0)
 
 The first working version uses `std::map`/`std::list`/`std::unordered_map` throughout — correct and easy to verify, deliberately not optimized yet. These are the numbers before any of the data-structure work in The Comparative Study below.
 
-**Environment**: Apple M2 (ARM64), macOS 26.5.1, `clang++ -O3 -std=c++20`. Like every other benchmark number in this README, this was measured under real background system load on a personal machine, not a dedicated bench — a fresh re-run under different load conditions has been observed to produce roughly half these absolute figures while preserving the same relative shape between workloads. Treat the numbers below as illustrative of the pattern, not a precise reference point; see Known Bottlenecks below.
+**Environment**: Apple M2 (ARM64), macOS 26.5.1, `clang++ -O3 -std=c++20`. Measured under real background system load, not a dedicated bench — see Bottlenecks below for what that means for these specific numbers.
 
 | Workload (1M Actions) | Throughput | Median Latency | P99 Latency |
 | :--- | :--- | :--- | :--- |
@@ -110,19 +118,19 @@ The first working version uses `std::map`/`std::list`/`std::unordered_map` throu
 | **Heavy Cancels** | ~8.73 M actions/sec | 125 ns | 541 ns |
 | **Worst-Case** | ~15.73 M actions/sec | 42 ns | 209 ns |
 
-Worst-Case beating Random Prices here is the whole reason the comparative study below exists — it's a strong hint that `std::map`'s tree traversal is costing more than it looks like on paper, and the comparative study is what actually went and checked.
+Worst-Case beating Random Prices here is why the comparative study below exists — a strong hint that `std::map`'s tree traversal costs more than it looks like on paper.
 
 ## The Comparative Study
 
 The 4 step implementation replaces the baseline's data structures one variable at a time, verifying correctness against the baseline after each change and benchmarking both wall-clock and (where available) hardware-counter evidence. Full detail is in [`public_docs/optimization_history.md`](public_docs/optimization_history.md) and the [Architecture Decision Log](public_docs/adr/README.md); the short version:
 
-*   **2.0 (done)**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator. Price levels unchanged (still `std::map`). **+33–35% throughput** across all three workloads; every hardware bottleneck category improved (Instruments CPU Counters); the Worst-Case/Random-Prices throughput ratio barely moved (1.668 → 1.655) — allocation cost was real but wasn't what explained that persistent gap.
-*   **3.0 (done)**: replaced `std::map<Price, PriceLevel>` with a flat, tick-indexed array plus an occupancy bitmap. **+23.7% (Random) and +24.2% (Heavy Cancels)** on top of 2.0 — but a genuine **−10.3% regression on Worst Case**, confirmed at the hardware-counter level, not noise. The mechanism: the array's bitmap scan starts from the edge with no cached "best price," so its cost scales with how far the sole occupied price is from that edge — cheap when many levels are active, expensive when there's exactly one. The standing hypothesis finally moved regardless: the Worst-Case/Random-Prices ratio dropped from ~1.65 to **1.195**. Full mechanism, and the identified-but-not-yet-built fix, in [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md).
-*   **4.0 (done)**: cached the best-price tick per side (closes 3.0's regression) and replaced the `OrderId → OrderLocation` cancellation index — a `std::unordered_map` since 1.0 — with a flat vector indexed directly by id. **+122.3% (Random), +97.1% (Heavy Cancels), +100.6% (Worst Case)** on top of 3.0 — every workload roughly doubled, and the one that regressed in 3.0 saw the biggest reversal of the three (a real regression turned into a strong gain), even though Random's +122.3% is the largest gain outright. The Worst-Case/Random-Prices ratio closes further still, to **1.086**. Instruments shows the fix is real: Discarded Bottleneck (branch-misprediction cost) drops sharply everywhere. A second category (Instruction Processing) rises in *percentage* terms everywhere too — resolved, not left hanging: its absolute cost held flat or dropped in every workload, and the percentage only rose because the total cycle count shrank even faster. Full breakdown in [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
+*   **2.0**: replaced `std::list<Order>`'s per-order heap allocation with an intrusive doubly-linked list backed by a fixed-capacity pool allocator; price levels unchanged. **+33–35% throughput** across all three workloads, every hardware bottleneck category improved — but the Worst-Case/Random-Prices ratio barely moved (1.668 → 1.655), so allocation cost wasn't what explained that gap.
+*   **3.0**: replaced `std::map<Price, PriceLevel>` with a flat, tick-indexed array plus an occupancy bitmap. **+23.7% (Random), +24.2% (Heavy Cancels)** on top of 2.0 — but a genuine **−10.3% regression on Worst Case**, confirmed at the hardware-counter level. Mechanism: the bitmap scan always starts from the array's edge with no cached "best price," so it's cheap when many levels are active and expensive when there's exactly one. The Worst-Case/Random-Prices ratio still dropped to **1.195** — real progress on the standing hypothesis, just not a clean win. Full mechanism in [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md).
+*   **4.0**: cached the best-price tick per side (closing 3.0's regression) and replaced the `OrderId → OrderLocation` index — a `std::unordered_map` since 1.0 — with a flat vector indexed directly by id. **+122.3% (Random), +97.1% (Heavy Cancels), +100.6% (Worst Case)** on top of 3.0 — every workload roughly doubled, and Worst Case's reversal is the biggest of the three (Random's +122.3% is the larger gain outright). Ratio closes to **1.086**. Discarded Bottleneck (branch-misprediction cost) drops sharply everywhere; Instruction Processing rises in *percentage* terms, but its absolute cost held flat or dropped — the percentage only rose because total cycles shrank faster. Full breakdown in [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
 
-This comparative study (1.0 → 4.0) is complete — the table below is the final cross-version summary. What's still open isn't a new numbered version, it's re-measuring these numbers on an idle machine (see Known Bottlenecks below): every figure above was measured under real background system load on a personal machine, not a quiet dedicated bench.
+This comparative study (1.0 → 4.0) is complete — the table below is the final cross-version summary. What's left isn't a new version, it's re-measuring on an idle machine (see Bottlenecks below).
 
-All four versions measured back-to-back in one run (the cleanest single comparison — see `optimization_history.md`'s "Final Comparison" for why cross-row numbers elsewhere in this repo aren't directly comparable the same way):
+All four versions measured back-to-back in one run — the cleanest single comparison (see `optimization_history.md`'s "Final Comparison" for why numbers elsewhere in this repo aren't directly comparable the same way):
 
 | Workload | 1.0 | 2.0 | 3.0 | 4.0 | Total (1.0→4.0) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -134,14 +142,14 @@ All four versions measured back-to-back in one run (the cleanest single comparis
 
 What's still genuinely limiting this engine's performance, as measured, not guessed at:
 
-*   **Absolute numbers need a clean re-run.** Every throughput/latency number in this README — the 1.0 baseline table included — was measured under real background system load (this is a personal machine, not a dedicated bench). Relative deltas (same process, same run, e.g. the comparative study's version-to-version deltas) are trustworthy; absolute figures carry that caveat until re-measured on an idle machine. A spot re-run of the 1.0 baseline produced throughput roughly half the table's figures under heavier load, with the same relative shape between workloads intact — a direct demonstration of how much this caveat matters, not just a disclaimer.
-*   **`std::chrono` observer overhead.** 20-40ns per call, called twice per operation — up to ~80ns of any measured latency figure may be the timer, not the engine. Worst at the nanosecond scale this project operates at.
-*   **No core pinning.** Nothing is pinned to isolated CPU cores, so P99.9/Max latency figures likely include OS scheduling interrupts alongside real algorithmic stalls.
-*   **Single-threaded ceiling.** No concurrent order ingestion — throughput is bounded by one core's worth of work, by design (see Non-Goals below).
+*   **Absolute numbers need a clean re-run.** Every throughput/latency figure in this README — the 1.0 baseline table included — was measured under real background system load on a personal machine, not a dedicated bench. Relative deltas (same process, same run) are trustworthy; absolute figures aren't, until re-measured on an idle machine — a spot re-run of the 1.0 baseline produced roughly half these numbers under heavier load, with the same relative shape between workloads intact.
+*   **`std::chrono` observer overhead.** 20-40ns per call, called twice per operation — up to ~80ns of any latency figure may be the timer, not the engine.
+*   **No core pinning.** Nothing is pinned to isolated CPU cores, so P99.9/Max latency likely includes OS scheduling interrupts alongside real algorithmic stalls.
+*   **Single-threaded ceiling.** No concurrent order ingestion — throughput is bounded by one core's worth of work, by design (see Limitations & Non-Goals below).
 
 ## Limitations & Non-Goals
 
-This is a single-machine, single-instrument, single-threaded matching engine — deliberately, per the project's phased scope (see [Documentation](#documentation) below). If you're evaluating it for anything beyond that scope, these are the boundaries as of the current phase, not oversights:
+This is a single-machine, single-instrument, single-threaded matching engine, deliberately — these are scope boundaries, not oversights (see Documentation below).
 
 *   **Single instrument.** `Order`/`Trade` carry no symbol field; one `MatchingEngine` is implicitly one order book.
 *   **No self-trade prevention.** Two crossing orders match regardless of where they originated.
@@ -153,18 +161,18 @@ This is a single-machine, single-instrument, single-threaded matching engine —
 
 71 tests across four files, run on every push (`engine_tests`):
 
-*   **Behavioral correctness** — exact matches, partial fills, price-time priority, cancellation, market-order sweep-and-discard, plus explicit edge cases (empty book, an id that was never inserted, a price level actually erased from the book after it fully drains, not just left empty).
-*   **Adversarial input** — 11 CSV-parser cases (negative numbers, malformed rows, bad Action/Side characters, a token with no leading digit at all, a malformed first line with no header, blank lines between valid rows) and a 20,000-operation fuzz test that deliberately reuses live `OrderId`s and checks the book's invariants after every single operation.
-*   **Differential testing across all four `OrderBook` implementations** — the same randomized action sequence (plus a deliberately adversarial all-same-price workload) replayed through each variant, asserting byte-identical trade ledgers against the 1.0 baseline before any performance number is trusted. A closing test runs all four through one shared workload at once.
-*   **Direct structural tests** for each variant's own boundary behavior — pool exhaustion, out-of-range price/`OrderId` handling, constructor validation — bypassing `MatchingEngine` entirely, since differential testing alone only ever supplies valid input.
+*   **Behavioral correctness** — exact matches, partial fills, price-time priority, cancellation, market-order sweep-and-discard, plus edge cases (empty book, a never-inserted id, a price level actually erased after it fully drains, not just left empty).
+*   **Adversarial input** — 11 CSV-parser cases (negative numbers, malformed rows, bad characters, missing headers, blank lines) and a 20,000-operation fuzz test that deliberately reuses live `OrderId`s, checking book invariants after every operation.
+*   **Differential testing across all four implementations** — byte-identical trade ledgers against the 1.0 baseline before any performance number is trusted, plus a closing test running all four at once (see Engineering Decisions above).
+*   **Direct structural tests** for each variant's boundary behavior — pool exhaustion, out-of-range price/`OrderId` handling, constructor validation — since differential testing alone only supplies valid input.
 
 99.2% line coverage, 100% function coverage (`gcovr`, CI `coverage` job).
 
 ## Code Quality
 
-*   **Zero concurrency primitives anywhere in the codebase** — no `std::mutex`, `std::thread`, `std::atomic`, or any other locking/threading primitive exists in `src/` or `tests/` (verified by a full-repo grep, not just asserted). This is a single-threaded engine by design, so there is no lock-ordering, no circular-wait, and no deadlock risk to check for — the class of bug doesn't exist here because the primitives that could produce it are absent, not because they were used carefully.
+*   **Zero concurrency primitives anywhere** — no `std::mutex`, `std::thread`, `std::atomic`, or any locking/threading primitive exists in `src/` or `tests/` (verified by a full-repo grep). Single-threaded by design, so there's no lock-ordering or deadlock risk to check for — the bug class doesn't exist here, not because it was handled carefully.
 *   **`clang-format`**, blocking in CI — a formatting diff fails the build.
-*   **`clang-tidy`**, non-blocking in CI (see [ADR-0012](public_docs/adr/0012-ci-pipeline-design.md) for why it started non-blocking on purpose).
+*   **`clang-tidy`**, non-blocking in CI (see [ADR-0012](public_docs/adr/0012-ci-pipeline-design.md) for why, on purpose).
 *   **`gcovr`** coverage reporting, not gated on a threshold — a tracked, visible number instead of an unverifiable claim.
 
 ## Local Development Initialization

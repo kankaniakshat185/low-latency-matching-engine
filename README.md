@@ -35,6 +35,63 @@ flowchart TD
     C -.-> L["4.0 OrderBookV4<br/>V3 + cached best-tick + flat id index"]
 ```
 
+## Tech Stack
+
+| Layer | Choice |
+| :--- | :--- |
+| Language | C++20 |
+| Build System | CMake, with GoogleTest fetched via `FetchContent` |
+| Testing | GoogleTest — 71 tests across `engine_test.cpp`, `replay_test.cpp`, `differential_test.cpp`, `structures_test.cpp` |
+| Static Analysis | `clang-tidy` (non-blocking), `clang-format` (blocking) |
+| Coverage | `gcovr` — 99.2% line, 100% function, tracked, not gated on a threshold |
+| Sanitizers | AddressSanitizer + UndefinedBehaviorSanitizer on every Debug build |
+| Profiling | Apple Instruments CPU Counters, correlated via `os_signpost` markers |
+| CI | GitHub Actions — 5-job pipeline (sanitized debug build, release build, static analysis, format check, coverage) |
+
+## Engineering Decisions That Mattered
+
+Four decisions from the [Architecture Decision Log](public_docs/adr/README.md) that shaped this project the most, each with what was actually measured, not just argued for.
+
+### 1. Composition Over Inheritance, Not a Style Preference
+
+**Problem**: `OrderBook`'s internals needed to be swappable across four separate implementations without touching `MatchingEngine` or any call site above it.
+
+**Approach**: Plain composition, zero virtual functions anywhere. A non-virtual call's target is fixed at compile time — the CPU never has to guess where it lands. A virtual call can't do that: the real target is read from a per-object vtable at runtime, so the branch predictor has to guess a destination that changes call-to-call, and it guesses worse on that than on a fixed one. Polymorphic `Order` subclasses would also need to live behind pointers instead of sitting by value inside `std::list`, since different subclasses would be different sizes.
+
+**Result**: A flat, predictable memory layout, and a design that later let `MatchingEngine` become a template (`MatchingEngineT<BookT>`) — swapping in four different `OrderBook` implementations with zero changes to the matching logic itself.
+
+**Tradeoff**: No way to run two `OrderBook` implementations side by side at runtime without a compile-time switch. Acceptable here, since the comparative study benchmarks each version sequentially, not concurrently. See [ADR-0001](public_docs/adr/0001-composition-over-inheritance.md).
+
+### 2. Differential Testing Before Any Performance Claim Counts
+
+**Problem**: A faster reimplementation that's quietly wrong is worthless — and this project ended up with four independent `OrderBook` implementations to compare against each other.
+
+**Approach**: Replay the identical randomized action sequence — plus a deliberately adversarial workload where every order lands at the same price, exactly where implementations diverge internally the most — through all four implementations, and assert the resulting trade ledgers are byte-identical.
+
+**Result**: All four versions passed differential testing on the first attempt, including a closing test that runs all four through one shared workload at once. When 3.0 later showed a real performance regression, differential testing had already independently proven it was still *correct* — just slower, a separate question with a separate, unambiguous answer.
+
+**Tradeoff**: Differential testing proves the four implementations agree with each other, not that any one of them is correct in isolation — it relies on each version being independently authored to the same specification, not derived from another's code. See `tests/differential_test.cpp`.
+
+### 3. Shipping a Real Regression, Then Fixing It a Version Later
+
+**Problem**: Replacing `std::map` with a flat, tick-indexed array (version 3.0) improved two of three benchmark workloads by roughly 24% — but measurably regressed the third by 10.3%.
+
+**Approach**: Root-caused it with real hardware performance counters (Apple Instruments) instead of guessing: the array's occupancy-bitmap scan always started from the array's edge, so its cost scaled with how far the one occupied price was from that edge — cheap with many active price levels, expensive with exactly one.
+
+**Result**: Shipped 3.0 with the regression and its mechanism documented plainly, rather than quietly patching it before anyone saw the number. A version later (4.0), caching the current best price turned that same −10.3% into a **+100.6%** gain on the identical workload — the biggest reversal of the four workloads, confirmed at the hardware-counter level, not just wall-clock.
+
+**Tradeoff**: A numbered version that's a strict regression on one axis looks worse in isolation than silently fixing it before release — but the mechanism, and the fix it directly pointed at, would never have been findable without the honest measurement first. See [ADR-0021](public_docs/adr/0021-flat-array-price-levels.md) and [ADR-0022](public_docs/adr/0022-cached-best-tick-and-flat-cancellation-index.md).
+
+### 4. A Pool Allocator That Fails Loudly Instead of Growing Quietly
+
+**Problem**: `std::list`'s per-order heap allocation meant `malloc`/`free` on every insert and cancel — unpredictable-latency work at exactly the moment a matching engine can least afford it.
+
+**Approach**: A fixed-capacity slab allocator (`OrderPool`) hands out pre-reserved, fixed-size slots instead of calling `malloc`. Capacity is decided once, up front; exhaustion is a hard, immediate error, never a silent grow.
+
+**Result**: +33–35% throughput across all three synthetic workloads — and, checked via hardware counters rather than assumed, *every* bottleneck category improved, not just wall-clock time, consistent with allocation's cache-locality cost rippling through the whole pipeline.
+
+**Tradeoff**: The pool has to be sized correctly for the workload up front. A pool that silently grew when full would reintroduce the exact allocation-timing unpredictability it exists to eliminate — so under-sizing it fails immediately and loudly instead of degrading quietly under load. See [ADR-0017](public_docs/adr/0017-order-pool-fixed-capacity.md).
+
 ## Benchmarking
 
 Three synthetic workloads, each isolating a different part of the system: orders scattered across a wide price range, a 70/30 insert/cancel mix, and every order landing at the same price. Every benchmark run does a 10% warm-up pass first (discarded, not timed) to get the instruction cache and branch predictor out of their cold-start state, then measures throughput and per-operation latency in two separate passes — timing both in the same loop was an early bug here (see `optimization_history.md`'s 1.0.1 row) that made the throughput number partly measure its own stopwatch.
